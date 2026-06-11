@@ -19,6 +19,7 @@ if str(CLI_DIR) not in sys.path:
 
 from embedding_index import prewarm_embedding_model  # noqa: E402
 from engine import MaicaEngine  # noqa: E402
+from mfocus import status_summary  # noqa: E402
 
 
 class GuiEngineWorker(QObject):
@@ -26,6 +27,7 @@ class GuiEngineWorker(QObject):
     config_ready = Signal(dict)
     status = Signal(str)
     finished = Signal(dict)
+    data_ready = Signal(dict)
 
     def __init__(self) -> None:
         super().__init__()
@@ -92,6 +94,34 @@ class GuiEngineWorker(QObject):
             self.engine.close()
             self.engine = None
 
+    @Slot()
+    def data_snapshot(self) -> None:
+        self._run_data_action('snapshot')
+
+    @Slot(str, str)
+    def set_profile_value(self, key: str, value: str) -> None:
+        self._run_data_action('set_profile_value', key=key, value=value)
+
+    @Slot(str, str, int)
+    def add_memory(self, text: str, tags: str, importance: int) -> None:
+        self._run_data_action('add_memory', text=text, tags=tags, importance=importance)
+
+    @Slot(int)
+    def delete_memory(self, memory_id: int) -> None:
+        self._run_data_action('delete_memory', memory_id=memory_id)
+
+    @Slot(str, str, int)
+    def add_fact(self, text: str, category: str, importance: int) -> None:
+        self._run_data_action('add_fact', text=text, category=category, importance=importance)
+
+    @Slot(int)
+    def delete_fact(self, fact_id: int) -> None:
+        self._run_data_action('delete_fact', fact_id=fact_id)
+
+    @Slot(str)
+    def export_debug(self, path: str) -> None:
+        self._run_data_action('export_debug', path=path)
+
     def _run_request(self, mode: str, text: str) -> None:
         try:
             if self.engine is None:
@@ -114,3 +144,113 @@ class GuiEngineWorker(QObject):
                     'error': f'{exc}\n{traceback.format_exc()}',
                 }
             )
+
+    def _ensure_engine(self) -> MaicaEngine:
+        if self.engine is None:
+            self.engine = MaicaEngine()
+            self._apply_gui_safety_overrides()
+        return self.engine
+
+    def _run_data_action(self, action: str, **kwargs: Any) -> None:
+        try:
+            engine = self._ensure_engine()
+            notice = ''
+            if action == 'set_profile_value':
+                key = str(kwargs.get('key') or '').strip()
+                value = str(kwargs.get('value') or '').strip()
+                if key:
+                    if key == 'affection':
+                        engine.store.set_affection(float(value or 0))
+                    elif key == 'nicknames':
+                        nicknames = [item.strip() for item in value.split(',') if item.strip()]
+                        engine.store.set_nicknames(nicknames)
+                    else:
+                        engine.store.set_profile_value(key, value)
+                    notice = f'Updated profile: {key}'
+            elif action == 'add_memory':
+                text = str(kwargs.get('text') or '').strip()
+                if text:
+                    memory_id = engine.store.add_memory(
+                        text,
+                        str(kwargs.get('tags') or '').strip(),
+                        int(kwargs.get('importance') or 1),
+                    )
+                    notice = f'Added memory #{memory_id}'
+            elif action == 'delete_memory':
+                memory_id = int(kwargs.get('memory_id') or 0)
+                if memory_id and engine.store.delete_memory(memory_id):
+                    notice = f'Deleted memory #{memory_id}'
+            elif action == 'add_fact':
+                text = str(kwargs.get('text') or '').strip()
+                if text:
+                    fact_id = engine.store.add_fact(
+                        text,
+                        str(kwargs.get('category') or 'custom').strip() or 'custom',
+                        'gui',
+                        int(kwargs.get('importance') or 2),
+                    )
+                    notice = f'Added fact #{fact_id}'
+            elif action == 'delete_fact':
+                fact_id = int(kwargs.get('fact_id') or 0)
+                if fact_id and engine.store.delete_fact(fact_id):
+                    notice = f'Deleted fact #{fact_id}'
+            elif action == 'export_debug':
+                target = Path(str(kwargs.get('path') or '')).expanduser()
+                if target:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_text(self._debug_payload(engine), encoding='utf-8')
+                    notice = f'Exported debug info: {target}'
+
+            payload = self._data_snapshot(engine)
+            payload.update({'ok': True, 'action': action, 'notice': notice, 'error': ''})
+            self.data_ready.emit(payload)
+        except Exception as exc:
+            self.data_ready.emit(
+                {
+                    'ok': False,
+                    'action': action,
+                    'notice': '',
+                    'error': f'{exc}\n{traceback.format_exc()}',
+                }
+            )
+
+    def _data_snapshot(self, engine: MaicaEngine) -> dict[str, Any]:
+        profile = engine.store.get_profile()
+        return {
+            'profile': profile,
+            'nicknames': engine.store.get_nicknames(),
+            'memories': [dict(row) for row in engine.store.all_memories()],
+            'facts': [dict(row) for row in engine.store.search_facts('', 200)],
+            'events': [dict(row) for row in engine.store.recent_events(30)],
+            'status': status_summary(engine.store, engine.config),
+            'config': self._safe_config(engine.config),
+        }
+
+    def _safe_config(self, config: dict[str, Any]) -> dict[str, Any]:
+        safe = {}
+        secret_words = ('key', 'token', 'secret', 'password')
+        public_keys = {
+            'api_base',
+            'model',
+            'language',
+            'mfocus_mode',
+            'mtrigger_mode',
+            'tts_enabled',
+            'tts_provider',
+            'embedding_enabled',
+            'memory_embedding_enabled',
+            'gui_disable_thread_embeddings',
+            'show_debug',
+        }
+        for key, value in config.items():
+            if key in public_keys:
+                safe[key] = value
+            elif any(word in key.lower() for word in secret_words):
+                safe[key] = '<hidden>' if value else ''
+        return safe
+
+    def _debug_payload(self, engine: MaicaEngine) -> str:
+        import json
+
+        payload = self._data_snapshot(engine)
+        return json.dumps(payload, ensure_ascii=False, indent=2, default=str)

@@ -1,4 +1,4 @@
-# MAICA GUI v0.8.3
+# MAICA GUI v0.8.5
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -48,6 +48,7 @@ assets.
 - MTrigger notices are shown in the chat log.
 - Windows SAPI TTS and Aliyun Bailian CosyVoice TTS.
 - Persistent background engine worker, so GUI no longer rebuilds the engine every turn.
+- Data Manager dialog for profile, nicknames, affection, memories, facts, and safe debug snapshots.
 
 ## TTS
 
@@ -113,6 +114,21 @@ This avoids a PySide6 worker-thread crash observed when sentence-transformers
 loads or encodes embeddings inside the GUI worker. The long-term fix is to move
 embedding retrieval into a separate subprocess/service, then let the GUI call
 that service instead of loading the embedding model inside a Qt worker thread.
+
+## Data Manager
+
+Use the `Data` button in the GUI to open the data manager.
+
+Current scope:
+
+- View and edit profile fields: `player_name`, `birthday`, `location`, `nicknames`, `affection`.
+- Add and delete memories.
+- Add and delete facts.
+- View a compact status/debug summary.
+- Export a local debug JSON snapshot with secret-like config values hidden.
+
+Database writes are performed inside the GUI engine worker thread, not directly
+from the Qt main thread.
 
 ## Not Yet Included
 

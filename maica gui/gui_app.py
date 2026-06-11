@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.8.3.
+"""MAICA GUI v0.8.5.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -16,12 +16,22 @@ from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QSpinBox,
+    QTabWidget,
     QTextBrowser,
     QTextEdit,
     QVBoxLayout,
@@ -32,7 +42,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.8.3'
+APP_VERSION = '0.8.5'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -42,6 +52,9 @@ from engine_worker import GuiEngineWorker  # noqa: E402
 from tts import create_tts  # noqa: E402
 
 
+PROFILE_FIELDS = ('player_name', 'birthday', 'location', 'nicknames', 'affection')
+
+
 def html_escape(text: str) -> str:
     return (
         text.replace('&', '&amp;')
@@ -49,6 +62,214 @@ def html_escape(text: str) -> str:
         .replace('>', '&gt;')
         .replace('"', '&quot;')
     )
+
+
+class DataManagerDialog(QDialog):
+    def __init__(self, owner: 'MainWindow') -> None:
+        super().__init__(owner)
+        self.owner = owner
+        self.snapshot: dict[str, Any] = {}
+        self.setWindowTitle('MAICA Data Manager')
+        self.resize(760, 620)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        self.tabs = QTabWidget()
+        layout.addWidget(self.tabs, 1)
+
+        self._build_profile_tab()
+        self._build_memory_tab()
+        self._build_fact_tab()
+        self._build_debug_tab()
+
+        button_row = QHBoxLayout()
+        refresh = QPushButton('Refresh')
+        close = QPushButton('Close')
+        refresh.clicked.connect(self.owner.request_data_snapshot)
+        close.clicked.connect(self.close)
+        button_row.addStretch(1)
+        button_row.addWidget(refresh)
+        button_row.addWidget(close)
+        layout.addLayout(button_row)
+
+    def _build_profile_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        form = QFormLayout()
+        self.profile_inputs: dict[str, QLineEdit] = {}
+        placeholders = {
+            'player_name': 'player',
+            'birthday': 'YYYY-MM-DD',
+            'location': 'City or region',
+            'nicknames': 'comma,separated,names',
+            'affection': '200',
+        }
+        for key in PROFILE_FIELDS:
+            field = QLineEdit()
+            field.setPlaceholderText(placeholders.get(key, ''))
+            self.profile_inputs[key] = field
+            form.addRow(key, field)
+        layout.addLayout(form)
+        save = QPushButton('Save profile')
+        save.clicked.connect(self.save_profile)
+        layout.addWidget(save)
+        layout.addStretch(1)
+        self.tabs.addTab(tab, 'Profile')
+
+    def _build_memory_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.memory_list = QListWidget()
+        layout.addWidget(self.memory_list, 1)
+        self.memory_text = QPlainTextEdit()
+        self.memory_text.setPlaceholderText('New memory text')
+        self.memory_text.setMaximumHeight(90)
+        layout.addWidget(self.memory_text)
+        row = QHBoxLayout()
+        self.memory_tags = QLineEdit()
+        self.memory_tags.setPlaceholderText('tags')
+        self.memory_importance = QSpinBox()
+        self.memory_importance.setRange(1, 5)
+        self.memory_importance.setValue(2)
+        add = QPushButton('Add memory')
+        delete = QPushButton('Delete selected')
+        add.clicked.connect(self.add_memory)
+        delete.clicked.connect(self.delete_memory)
+        row.addWidget(QLabel('Tags'))
+        row.addWidget(self.memory_tags, 1)
+        row.addWidget(QLabel('Importance'))
+        row.addWidget(self.memory_importance)
+        row.addWidget(add)
+        row.addWidget(delete)
+        layout.addLayout(row)
+        self.tabs.addTab(tab, 'Memories')
+
+    def _build_fact_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.fact_list = QListWidget()
+        layout.addWidget(self.fact_list, 1)
+        self.fact_text = QPlainTextEdit()
+        self.fact_text.setPlaceholderText('New fact text')
+        self.fact_text.setMaximumHeight(90)
+        layout.addWidget(self.fact_text)
+        row = QHBoxLayout()
+        self.fact_category = QLineEdit()
+        self.fact_category.setPlaceholderText('custom')
+        self.fact_importance = QSpinBox()
+        self.fact_importance.setRange(1, 5)
+        self.fact_importance.setValue(2)
+        add = QPushButton('Add fact')
+        delete = QPushButton('Delete selected')
+        add.clicked.connect(self.add_fact)
+        delete.clicked.connect(self.delete_fact)
+        row.addWidget(QLabel('Category'))
+        row.addWidget(self.fact_category, 1)
+        row.addWidget(QLabel('Importance'))
+        row.addWidget(self.fact_importance)
+        row.addWidget(add)
+        row.addWidget(delete)
+        layout.addLayout(row)
+        self.tabs.addTab(tab, 'Facts')
+
+    def _build_debug_tab(self) -> None:
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+        self.debug_view = QPlainTextEdit()
+        self.debug_view.setReadOnly(True)
+        layout.addWidget(self.debug_view, 1)
+        export = QPushButton('Export debug JSON')
+        export.clicked.connect(self.export_debug)
+        layout.addWidget(export)
+        self.tabs.addTab(tab, 'Debug')
+
+    def render(self, snapshot: dict[str, Any]) -> None:
+        self.snapshot = snapshot
+        profile = snapshot.get('profile') if isinstance(snapshot.get('profile'), dict) else {}
+        nicknames = snapshot.get('nicknames') if isinstance(snapshot.get('nicknames'), list) else []
+        for key, field in self.profile_inputs.items():
+            if key == 'nicknames':
+                field.setText(', '.join(str(item) for item in nicknames))
+            else:
+                field.setText(str(profile.get(key, '')))
+        self._render_memories(snapshot.get('memories') if isinstance(snapshot.get('memories'), list) else [])
+        self._render_facts(snapshot.get('facts') if isinstance(snapshot.get('facts'), list) else [])
+        self._render_debug(snapshot)
+
+    def _render_memories(self, memories: list[dict[str, Any]]) -> None:
+        self.memory_list.clear()
+        for memory in memories:
+            item = QListWidgetItem(
+                f"#{memory.get('id')} [{memory.get('importance')}] {memory.get('text')}  ({memory.get('tags', '')})"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, int(memory.get('id') or 0))
+            self.memory_list.addItem(item)
+
+    def _render_facts(self, facts: list[dict[str, Any]]) -> None:
+        self.fact_list.clear()
+        for fact in facts:
+            item = QListWidgetItem(
+                f"#{fact.get('id')} [{fact.get('importance')}] {fact.get('category')}: {fact.get('text')}"
+            )
+            item.setData(Qt.ItemDataRole.UserRole, int(fact.get('id') or 0))
+            self.fact_list.addItem(item)
+
+    def _render_debug(self, snapshot: dict[str, Any]) -> None:
+        import json
+
+        public_snapshot = {
+            'status': snapshot.get('status', {}),
+            'config': snapshot.get('config', {}),
+            'counts': {
+                'memories': len(snapshot.get('memories') or []),
+                'facts': len(snapshot.get('facts') or []),
+                'events': len(snapshot.get('events') or []),
+            },
+            'recent_events': snapshot.get('events', [])[:8],
+        }
+        self.debug_view.setPlainText(json.dumps(public_snapshot, ensure_ascii=False, indent=2, default=str))
+
+    def save_profile(self) -> None:
+        for key, field in self.profile_inputs.items():
+            self.owner.profile_set_requested.emit(key, field.text().strip())
+        self.owner.add_system_message('Profile update requested.')
+
+    def add_memory(self) -> None:
+        text = self.memory_text.toPlainText().strip()
+        if not text:
+            return
+        self.owner.memory_add_requested.emit(text, self.memory_tags.text().strip(), self.memory_importance.value())
+        self.memory_text.clear()
+
+    def delete_memory(self) -> None:
+        item = self.memory_list.currentItem()
+        if item is None:
+            return
+        memory_id = int(item.data(Qt.ItemDataRole.UserRole) or 0)
+        if memory_id:
+            self.owner.memory_delete_requested.emit(memory_id)
+
+    def add_fact(self) -> None:
+        text = self.fact_text.toPlainText().strip()
+        if not text:
+            return
+        category = self.fact_category.text().strip() or 'custom'
+        self.owner.fact_add_requested.emit(text, category, self.fact_importance.value())
+        self.fact_text.clear()
+
+    def delete_fact(self) -> None:
+        item = self.fact_list.currentItem()
+        if item is None:
+            return
+        fact_id = int(item.data(Qt.ItemDataRole.UserRole) or 0)
+        if fact_id:
+            self.owner.fact_delete_requested.emit(fact_id)
+
+    def export_debug(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, 'Export debug JSON', 'maica_gui_debug.json', 'JSON (*.json)')
+        if path:
+            self.owner.debug_export_requested.emit(path)
 
 
 class BackgroundWidget(QWidget):
@@ -77,6 +298,13 @@ class MainWindow(QMainWindow):
     chat_requested = Signal(str)
     spire_requested = Signal(str)
     shutdown_requested = Signal()
+    data_snapshot_requested = Signal()
+    profile_set_requested = Signal(str, str)
+    memory_add_requested = Signal(str, str, int)
+    memory_delete_requested = Signal(int)
+    fact_add_requested = Signal(str, str, int)
+    fact_delete_requested = Signal(int)
+    debug_export_requested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -90,6 +318,7 @@ class MainWindow(QMainWindow):
         self.tts = create_tts({})
         self.tts_enabled = False
         self.last_tts_error = ''
+        self.data_dialog: DataManagerDialog | None = None
 
         self.setWindowTitle(f'MAICA GUI v{APP_VERSION}')
         self.resize(1180, 760)
@@ -106,9 +335,17 @@ class MainWindow(QMainWindow):
         self.worker.status.connect(self.add_system_message)
         self.worker.finished.connect(self._handle_result)
         self.worker.config_ready.connect(self._handle_config_ready)
+        self.worker.data_ready.connect(self._handle_data_ready)
         self.chat_requested.connect(self.worker.chat)
         self.spire_requested.connect(self.worker.spire)
         self.shutdown_requested.connect(self.worker.shutdown)
+        self.data_snapshot_requested.connect(self.worker.data_snapshot)
+        self.profile_set_requested.connect(self.worker.set_profile_value)
+        self.memory_add_requested.connect(self.worker.add_memory)
+        self.memory_delete_requested.connect(self.worker.delete_memory)
+        self.fact_add_requested.connect(self.worker.add_fact)
+        self.fact_delete_requested.connect(self.worker.delete_fact)
+        self.debug_export_requested.connect(self.worker.export_debug)
 
     def _build_ui(self) -> None:
         root = BackgroundWidget(self.assets.background())
@@ -162,16 +399,19 @@ class MainWindow(QMainWindow):
         self.spire_button = QPushButton('/spire')
         self.tts_button = QPushButton('TTS: off')
         self.stop_tts_button = QPushButton('停止语音')
+        self.data_button = QPushButton('Data')
         self.clear_button = QPushButton('清屏')
         self.send_button.clicked.connect(self.send_chat)
         self.spire_button.clicked.connect(self.send_spire)
         self.tts_button.clicked.connect(self.toggle_tts)
         self.stop_tts_button.clicked.connect(self.stop_tts)
+        self.data_button.clicked.connect(self.open_data_manager)
         self.clear_button.clicked.connect(self.chat_view.clear)
         button_row.addWidget(self.send_button)
         button_row.addWidget(self.spire_button)
         button_row.addWidget(self.tts_button)
         button_row.addWidget(self.stop_tts_button)
+        button_row.addWidget(self.data_button)
         button_row.addWidget(self.clear_button)
         right_layout.addLayout(button_row)
 
@@ -283,6 +523,28 @@ class MainWindow(QMainWindow):
 
     def stop_tts(self) -> None:
         self.tts.stop()
+
+    def open_data_manager(self) -> None:
+        if self.data_dialog is None:
+            self.data_dialog = DataManagerDialog(self)
+        self.data_dialog.show()
+        self.data_dialog.raise_()
+        self.data_dialog.activateWindow()
+        self.request_data_snapshot()
+
+    def request_data_snapshot(self) -> None:
+        self.data_snapshot_requested.emit()
+
+    def _handle_data_ready(self, payload: dict[str, Any]) -> None:
+        if not payload.get('ok', True):
+            self.add_system_message(f'Data manager error: {payload.get("error", "unknown error")}')
+            QMessageBox.warning(self, 'Data manager error', str(payload.get('error', 'unknown error')))
+            return
+        notice = str(payload.get('notice') or '').strip()
+        if notice:
+            self.add_system_message(notice)
+        if self.data_dialog is not None:
+            self.data_dialog.render(payload)
 
     def _handle_result(self, result: dict[str, Any]) -> None:
         self.set_busy(False)
