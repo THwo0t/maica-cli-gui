@@ -13,6 +13,7 @@ import os
 import py_compile
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -98,6 +99,47 @@ def test_text_helpers() -> None:
     check(not result['ok'], 'Null STT should not recognize speech')
 
 
+def test_engine_fake_chat() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from engine import MaicaEngine
+
+    class FakeClient:
+        def chat(self, messages: list[dict[str, str]]) -> str:
+            assert messages
+            return json.dumps(
+                {
+                    'text': 'I am here with you.',
+                    'emotion': 'smile',
+                    'action': {},
+                }
+            )
+
+    with tempfile.TemporaryDirectory(prefix='maica-smoke-') as temp_dir:
+        config = dict(DEFAULT_CONFIG)
+        config.update(
+            {
+                'api_key_required': False,
+                'jsonl_logs_enabled': False,
+                'mfocus_mode': 'rule',
+                'mtrigger_mode': 'rule',
+                'embedding_enabled': False,
+                'memory_embedding_enabled': False,
+                'embedding_service_enabled': False,
+                'show_debug': False,
+            }
+        )
+        engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'smoke.db', app_dir=CLI_DIR)
+        engine.client = FakeClient()
+        try:
+            result = engine.chat('hello')
+            check(result['ok'], result.get('error', 'fake chat failed'))
+            check(result['text'] == 'I am here with you.', 'fake chat text mismatch')
+            check(result['emotion'] == 'smile', 'fake chat emotion mismatch')
+        finally:
+            engine.close()
+
+
 def test_gui_offscreen() -> None:
     script = (
         "import sys;"
@@ -170,6 +212,8 @@ def main() -> int:
     print('embedding_service_help ok')
     test_text_helpers()
     print('text_helpers ok')
+    test_engine_fake_chat()
+    print('engine_fake_chat ok')
     test_gui_offscreen()
     print('gui_offscreen ok')
     test_gui_safe_offscreen()

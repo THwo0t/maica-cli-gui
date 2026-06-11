@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.4
+# MAICA GUI v0.9.5
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -232,6 +232,10 @@ python "maica gui\diagnostics.py"
 `diagnostics.py` prints a safe JSON report for local troubleshooting. It checks
 Python, Git, package availability, runtime paths, and a masked config summary.
 It does not print API keys, database rows, memories, or logs.
+
+The smoke suite also runs a no-API fake-client `MaicaEngine.chat()` call against
+a temporary database. This catches core prompt/parse/store regressions without
+using real API quota or real memories.
 
 ## Packaging
 

@@ -72,7 +72,8 @@ cleaning, STT disabled-provider behavior, diagnostics, and GUI offscreen
 startup.
 
 The suite also launches the GUI once with an isolated safe test database under
-`maica gui/.safe_test/`.
+`maica gui/.safe_test/` and runs a no-API fake-client chat through `MaicaEngine`
+against a temporary database.
 
 ## Build Executable
 
