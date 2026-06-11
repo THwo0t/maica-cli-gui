@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.5
+# MAICA GUI v0.9.6
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -254,6 +254,11 @@ The build creates `maica-gui.exe` plus `maica-embedding-service.exe`; the GUI
 uses the service executable only when external embedding service mode is enabled.
 First-time PyInstaller builds can take several minutes because PySide6 analysis
 is heavy.
+
+The build script packages a sanitized staging copy rather than your live
+`maica cli` directory. It then runs `maica gui/package_audit.py` against
+`dist/maica-gui` to reject private config, databases, logs, FAISS indexes, model
+blobs, TTS caches, raw MAS assets, and secret-like strings.
 
 ## Not Yet Included
 

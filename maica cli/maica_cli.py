@@ -935,7 +935,7 @@ def handle_command(
 def repl(config: dict[str, Any], store: Store) -> None:
     engine = MaicaEngine(config=config, store=store, app_dir=APP_DIR)
     client = engine.client
-    print("MAICA CLI Debugger v0.9.5")
+    print("MAICA CLI Debugger v0.9.6")
     print("Type /help for debug commands, /exit to quit. Use maica gui/gui_app.py for the GUI.")
     print()
 

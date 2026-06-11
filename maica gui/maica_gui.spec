@@ -1,4 +1,8 @@
 # -*- mode: python ; coding: utf-8 -*-
+#
+# Advanced single-spec build entrypoint. The recommended Windows build path is
+# the root `build_gui_exe.ps1`, which builds GUI and embedding service as two
+# independent onedir targets and then copies the service exe into the GUI dist.
 
 from pathlib import Path
 

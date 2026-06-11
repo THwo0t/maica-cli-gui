@@ -95,6 +95,11 @@ embedding service mode is enabled.
 First-time PyInstaller builds can take several minutes because PySide6 analysis
 is heavy. Generated output stays outside Git.
 
+The build script stages a sanitized copy of runtime files before packaging and
+runs `maica gui/package_audit.py` against the output. The audit fails if private
+config, databases, logs, FAISS indexes, model blobs, TTS caches, raw MAS assets,
+or secret-like strings appear in the package.
+
 ## Diagnostics
 
 Create a local troubleshooting report without exposing API keys, memories, logs,

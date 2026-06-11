@@ -33,6 +33,7 @@ def compile_python() -> None:
         GUI_DIR / 'engine_worker.py',
         GUI_DIR / 'gui_app.py',
         GUI_DIR / 'diagnostics.py',
+        GUI_DIR / 'package_audit.py',
         GUI_DIR / 'stt.py',
         GUI_DIR / 'tts.py',
         GUI_DIR / 'maica_gui.spec',
@@ -44,7 +45,15 @@ def compile_python() -> None:
         CLI_DIR / 'example_bank.py',
     ]
     for path in files:
-        py_compile.compile(str(path), doraise=True)
+        with tempfile.NamedTemporaryFile(suffix='.pyc', delete=False) as handle:
+            cfile = handle.name
+        try:
+            py_compile.compile(str(path), cfile=cfile, doraise=True)
+        finally:
+            try:
+                Path(cfile).unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def validate_json() -> None:
@@ -140,6 +149,31 @@ def test_engine_fake_chat() -> None:
             engine.close()
 
 
+def test_package_audit() -> None:
+    with tempfile.TemporaryDirectory(prefix='maica-package-audit-') as temp_dir:
+        safe_root = Path(temp_dir)
+        (safe_root / 'safe.txt').write_text('hello', encoding='utf-8')
+        completed = subprocess.run(
+            [sys.executable, str(GUI_DIR / 'package_audit.py'), str(safe_root)],
+            cwd=str(ROOT_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        check(completed.returncode == 0, completed.stderr or completed.stdout)
+        (safe_root / 'config.json').write_text('{}', encoding='utf-8')
+        completed = subprocess.run(
+            [sys.executable, str(GUI_DIR / 'package_audit.py'), str(safe_root)],
+            cwd=str(ROOT_DIR),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
+        check(completed.returncode != 0, 'package audit should reject config.json')
+
+
 def test_gui_offscreen() -> None:
     script = (
         "import sys;"
@@ -214,6 +248,8 @@ def main() -> int:
     print('text_helpers ok')
     test_engine_fake_chat()
     print('engine_fake_chat ok')
+    test_package_audit()
+    print('package_audit ok')
     test_gui_offscreen()
     print('gui_offscreen ok')
     test_gui_safe_offscreen()
