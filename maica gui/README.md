@@ -78,6 +78,7 @@ The GUI supports provider-style TTS adapters.
   "tts_bailian_endpoint": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
   "tts_bailian_model": "cosyvoice-v3.5-plus",
   "tts_bailian_voice": "",
+  "tts_bailian_format": "mp3",
   "tts_bailian_sample_rate": 22050,
   "tts_bailian_volume": 50,
   "tts_bailian_rate": 1.0,
@@ -87,9 +88,9 @@ The GUI supports provider-style TTS adapters.
 }
 ```
 
-The current adapter requests WAV audio and plays it through a child PowerShell
-`System.Media.SoundPlayer` process. This keeps network synthesis and playback
-outside the Qt main thread.
+The current adapter requests MP3 audio and plays it through a child PowerShell
+`System.Windows.Media.MediaPlayer` process. This keeps network synthesis and
+playback outside the Qt main thread.
 
 ## Vector Retrieval In GUI
 

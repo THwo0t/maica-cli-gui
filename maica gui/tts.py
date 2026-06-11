@@ -109,7 +109,7 @@ class WindowsSapiTTS:
 class BailianCosyVoiceTTS:
     """Aliyun Bailian CosyVoice WebSocket TTS provider.
 
-    The provider synthesizes into a local WAV file, then plays it in a child
+    The provider synthesizes into a local audio file, then plays it in a child
     PowerShell process. Keeping both network synthesis and playback out of the
     Qt main thread prevents the GUI from freezing while Monika speaks.
     """
@@ -154,14 +154,23 @@ class BailianCosyVoiceTTS:
 
     def _speak_blocking(self, text: str, generation: int) -> None:
         try:
-            audio_path = self._synthesize_to_wav(text, generation)
+            audio_path = self._synthesize_to_audio(text, generation)
             if audio_path is None or not self._is_current(generation):
                 return
-            self._play_wav(audio_path, generation)
+            self._play_audio(audio_path, generation)
         except Exception as exc:
             self.last_error = str(exc)
 
     def _synthesize_to_wav(self, text: str, generation: int) -> Path | None:
+        """Compatibility helper for older smoke tests."""
+        return self._synthesize_to_audio(text, generation, forced_format='wav')
+
+    def _synthesize_to_audio(
+        self,
+        text: str,
+        generation: int,
+        forced_format: str | None = None,
+    ) -> Path | None:
         try:
             import websocket
         except Exception as exc:
@@ -195,7 +204,8 @@ class BailianCosyVoiceTTS:
 
         audio_chunks: list[bytes] = []
         try:
-            ws.send(json.dumps(self._run_task_payload(task_id, model, voice), ensure_ascii=False))
+            audio_format = self._audio_format(forced_format)
+            ws.send(json.dumps(self._run_task_payload(task_id, model, voice, audio_format), ensure_ascii=False))
             started = False
             finished = False
             while self._is_current(generation) and not finished:
@@ -218,7 +228,7 @@ class BailianCosyVoiceTTS:
                 return None
 
             TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            audio_path = TTS_CACHE_DIR / 'last_tts.wav'
+            audio_path = TTS_CACHE_DIR / f'last_tts.{audio_format}'
             audio_path.write_bytes(b''.join(audio_chunks))
             return audio_path
         finally:
@@ -230,12 +240,12 @@ class BailianCosyVoiceTTS:
             except Exception:
                 pass
 
-    def _run_task_payload(self, task_id: str, model: str, voice: str) -> dict[str, Any]:
+    def _run_task_payload(self, task_id: str, model: str, voice: str, audio_format: str) -> dict[str, Any]:
         instruction = str(self.config.get('tts_bailian_instruction') or '').strip()
         parameters: dict[str, Any] = {
             'text_type': 'PlainText',
             'voice': voice,
-            'format': 'wav',
+            'format': audio_format,
             'sample_rate': int(self.config.get('tts_bailian_sample_rate', 22050) or 22050),
             'volume': int(self.config.get('tts_bailian_volume', 50) or 50),
             'rate': float(self.config.get('tts_bailian_rate', 1.0) or 1.0),
@@ -280,12 +290,23 @@ class BailianCosyVoiceTTS:
             'payload': {'input': {}},
         }
 
-    def _play_wav(self, audio_path: Path, generation: int) -> None:
+    def _play_audio(self, audio_path: Path, generation: int) -> None:
         safe_path = str(audio_path).replace("'", "''")
         script = (
-            f"$p=New-Object System.Media.SoundPlayer '{safe_path}';"
-            "$p.Load();"
-            "$p.PlaySync();"
+            "Add-Type -AssemblyName PresentationCore;"
+            f"$path='{safe_path}';"
+            "$p=New-Object System.Windows.Media.MediaPlayer;"
+            "$p.Open([System.Uri]::new($path));"
+            "$p.Volume=1.0;"
+            "$p.Play();"
+            "$deadline=(Get-Date).AddSeconds(60);"
+            "while((-not $p.NaturalDuration.HasTimeSpan) -and ((Get-Date) -lt $deadline)){Start-Sleep -Milliseconds 80};"
+            "if($p.NaturalDuration.HasTimeSpan){"
+            "$ms=[int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 350;"
+            "Start-Sleep -Milliseconds $ms"
+            "}else{Start-Sleep -Seconds 8};"
+            "$p.Stop();"
+            "$p.Close();"
         )
         creation_flags = 0
         if hasattr(subprocess, 'CREATE_NO_WINDOW'):
@@ -293,14 +314,15 @@ class BailianCosyVoiceTTS:
         process = subprocess.Popen(
             [
                 'powershell',
+                '-Sta',
                 '-NoProfile',
                 '-ExecutionPolicy',
                 'Bypass',
                 '-Command',
                 script,
             ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             creationflags=creation_flags,
         )
@@ -313,11 +335,21 @@ class BailianCosyVoiceTTS:
                 return
             self.process = process
         try:
-            process.wait()
+            stdout, stderr = process.communicate()
+            if process.returncode not in (0, None):
+                detail = (stderr or stdout or '').strip()
+                raise RuntimeError(f'audio playback failed: {detail or process.returncode}')
         finally:
             with self.lock:
                 if self.process is process:
                     self.process = None
+
+    def _audio_format(self, forced_format: str | None = None) -> str:
+        raw_format = forced_format or str(self.config.get('tts_bailian_format') or 'mp3')
+        audio_format = raw_format.strip().lower()
+        if audio_format not in {'mp3', 'wav'}:
+            audio_format = 'mp3'
+        return audio_format
 
     def _is_current(self, generation: int) -> bool:
         with self.lock:

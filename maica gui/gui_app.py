@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, Qt, QThread, Signal
+from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
@@ -89,6 +89,7 @@ class MainWindow(QMainWindow):
         self.worker.moveToThread(self.thread)
         self.tts = create_tts({})
         self.tts_enabled = False
+        self.last_tts_error = ''
 
         self.setWindowTitle(f'MAICA GUI v{APP_VERSION}')
         self.resize(1180, 760)
@@ -270,6 +271,8 @@ class MainWindow(QMainWindow):
         self.tts = create_tts(config)
         self.tts_enabled = bool(config.get('tts_enabled', False))
         self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
+        provider = str(config.get('tts_provider') or 'windows_sapi')
+        self.add_system_message(f'TTS provider: {provider} · {"on" if self.tts_enabled else "off"}')
 
     def toggle_tts(self) -> None:
         self.tts_enabled = not self.tts_enabled
@@ -294,9 +297,18 @@ class MainWindow(QMainWindow):
         self.set_emotion(str(visual_state.get('emotion') or emotion))
         self.add_monika_message(reply_text, emotion, result.get('response_time', ''))
         if self.tts_enabled and reply_text:
+            self.add_system_message('TTS 正在合成/播放...')
             self.tts.speak(reply_text)
+            QTimer.singleShot(1800, self.report_tts_error_if_any)
+            QTimer.singleShot(6000, self.report_tts_error_if_any)
         for notice in result.get('mtrigger_notices') or []:
             self.chat_view.append(f'<div class="notice">{html_escape(str(notice))}</div>')
+
+    def report_tts_error_if_any(self) -> None:
+        error = str(getattr(self.tts, 'last_error', '') or '').strip()
+        if error and error != self.last_tts_error:
+            self.last_tts_error = error
+            self.add_system_message(f'TTS 错误：{error}')
 
 
 STYLE_SHEET = """
