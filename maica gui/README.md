@@ -41,6 +41,7 @@ assets.
 
 - Chat with Monika through `MaicaEngine.chat()`.
 - `/spire` button through `MaicaEngine.spire()`.
+- Default dialogue output is English when `language` is set to `en`.
 - Background scene from MAS spaceroom assets.
 - Layered PNG avatar preview.
 - Emotion metadata changes the visible expression preset.
@@ -91,6 +92,10 @@ The GUI supports provider-style TTS adapters.
 The current adapter requests MP3 audio and plays it through a child PowerShell
 `System.Windows.Media.MediaPlayer` process. This keeps network synthesis and
 playback outside the Qt main thread.
+
+Before TTS synthesis, the GUI removes bracketed stage directions and metadata
+from the spoken text. The visible chat text is unchanged; only the voice line is
+cleaned.
 
 ## Vector Retrieval In GUI
 

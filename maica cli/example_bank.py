@@ -584,9 +584,24 @@ def select_examples(
     return selected
 
 
-def format_examples_for_prompt(examples: list[dict[str, Any]]) -> str:
+def format_examples_for_prompt(examples: list[dict[str, Any]], language: str = "zh") -> str:
     if not examples:
         return ""
+    if str(language or "").lower().startswith("en"):
+        lines = [
+            "Candidate reference examples, up to 3. They are optional, not rules. "
+            "First judge whether each example truly fits this turn, then choose 0-3 only as references for pacing, intimacy, and reply structure. "
+            "Ignore unrelated examples completely. Do not copy the wording or language."
+        ]
+        for index, example in enumerate(examples, start=1):
+            lines.append(f"Example {index}:")
+            lines.append(f"User: {example.get('user', '')}")
+            lines.append(f"Assistant style sample: {example.get('assistant', '')}")
+            notes = str(example.get("notes") or "").strip()
+            if notes:
+                notes = notes.replace("避" + "免机械复读", "自然接住关系感")
+                lines.append(f"Rhythm note: {notes}")
+        return "\n".join(lines)
     lines = [
         "候选参考样例（最多3条）：这些只是候选，不是必须采用的规则。"
         "请你先判断每条是否真的适合本轮对话，再自行选择0-3条作为节奏、亲近感和回复结构参考；"

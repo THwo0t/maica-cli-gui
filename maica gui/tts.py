@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import threading
 import uuid
@@ -14,6 +15,53 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 TTS_CACHE_DIR = GUI_DIR / '.tts_cache'
+
+
+META_LINE_PREFIXES = (
+    'emotion:',
+    'action:',
+    'debug:',
+    '[debug]',
+    '[mtrigger',
+    'mtrigger',
+    'system:',
+    'assistant:',
+    'user:',
+    'json:',
+)
+
+
+def clean_tts_text(text: str) -> str:
+    """Remove stage directions and metadata before sending text to TTS."""
+    cleaned_lines: list[str] = []
+    for raw_line in str(text or '').splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        lowered = line.lower()
+        if any(lowered.startswith(prefix) for prefix in META_LINE_PREFIXES):
+            continue
+        cleaned_lines.append(line)
+    text = ' '.join(cleaned_lines)
+
+    # Remove common stage directions: (smiles), （轻轻握住你的手）, [emotion], *sighs*.
+    paired_patterns = [
+        r'\([^()\n]{0,160}\)',
+        r'（[^（）\n]{0,160}）',
+        r'\[[^\[\]\n]{0,160}\]',
+        r'【[^【】\n]{0,160}】',
+        r'\{[^{}\n]{0,160}\}',
+        r'\*[^*\n]{0,160}\*',
+    ]
+    for pattern in paired_patterns:
+        text = re.sub(pattern, ' ', text)
+
+    # Remove leaked code-fence or response-format fragments if a model misbehaves.
+    text = re.sub(r'```(?:json)?|```', ' ', text, flags=re.I)
+    text = re.sub(r'\b(?:emotion|action|segments|metadata)\s*[:=]\s*["\']?[\w -]{0,40}["\']?', ' ', text, flags=re.I)
+    text = re.sub(r'\s+', ' ', text).strip()
+    text = re.sub(r'\s+([,.!?;:])', r'\1', text)
+    return text
 
 
 class WindowsSapiTTS:
@@ -29,7 +77,7 @@ class WindowsSapiTTS:
         self.lock = threading.Lock()
 
     def speak(self, text: str) -> None:
-        clean_text = text.strip()
+        clean_text = clean_tts_text(text)
         if not clean_text:
             return
         try:
@@ -383,7 +431,7 @@ class BailianCosyVoiceTTS:
         return f'Bailian CosyVoice task failed: {code} {message}'.strip()
 
     def _clean_text(self, text: str) -> str:
-        return ' '.join(line.strip() for line in text.splitlines() if line.strip())
+        return clean_tts_text(text)
 
 
 class NullTTS:

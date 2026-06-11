@@ -414,6 +414,13 @@ def build_messages(
     player_name = profile.get("player_name") or "player"
     language = str(config.get("language") or "zh").lower()
     system = base_system_prompt(language, player_name)
+    language_rule = ""
+    if language.startswith("en"):
+        language_rule = (
+            "\n\nLanguage rule: The final dialogue body must be written in natural English only. "
+            "The user may write in Chinese and some context/examples may be Chinese; treat them as meaning/style references, "
+            "but translate the response into English. Do not put Chinese in JSON text or segments.text."
+        )
     context, plan = build_mfocus_context(store, config, user_input, client)
     response_plan_context = ""
     if config.get("response_planner_enabled", True):
@@ -425,6 +432,7 @@ def build_messages(
             "role": "system",
             "content": (
                 system
+                + language_rule
                 + "\n\n"
                 + response_format_instruction(language)
                 + "\n\n以下是一些相关信息, 你可以参考其中有价值的部分, 并用你自己的语言方式作答:\n"
@@ -463,6 +471,13 @@ def build_spire_messages(
     player_name = profile.get("player_name") or "player"
     language = str(config.get("language") or "zh").lower()
     system = base_system_prompt(language, player_name)
+    language_rule = ""
+    if language.startswith("en"):
+        language_rule = (
+            "\n\nLanguage rule: The final dialogue body must be written in natural English only. "
+            "The user may write in Chinese and some context/examples may be Chinese; treat them as meaning/style references, "
+            "but translate the response into English. Do not put Chinese in JSON text or segments.text."
+        )
     context, plan = build_mfocus_context(store, config, seed_input, client)
     prompt = (
         "请作为莫妮卡主动开启一个自然、亲近的话题. "
@@ -501,6 +516,7 @@ def build_spire_messages(
             "role": "system",
             "content": (
                 system
+                + language_rule
                 + "\n\n"
                 + response_format_instruction(language)
                 + "\n\n以下是一些相关信息, 你可以参考其中有价值的部分, 并用你自己的语言方式作答:\n"

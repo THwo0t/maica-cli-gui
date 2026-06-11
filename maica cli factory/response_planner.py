@@ -367,6 +367,28 @@ def format_response_plan_context(plan: dict[str, Any], language: str = 'zh') -> 
     if not plan:
         return ''
     ask_back = 'yes' if plan.get('should_ask_back') else 'no'
+    if str(language or '').lower().startswith('en'):
+        lines = [
+            'Per-turn performance direction:\n'
+            f'- Category: {plan.get("category", "daily")}\n'
+            f'- Intent: {plan.get("intent", "general_daily")}\n'
+            f'- Mode: {plan.get("mode", "daily_small_alive")}\n'
+            f'- Emotional color: {plan.get("emotion", "neutral")}\n'
+            f'- Subtext: {plan.get("subtext", "")}\n'
+            f'- Rhythm: {plan.get("length", "medium")}\n'
+            f'- Ask back: {ask_back}\n'
+            f'- Style direction: {plan.get("style_directive", "")}\n'
+            '- Final reply language: English only. If examples are Chinese, use only their rhythm and intimacy, not their language.'
+        ]
+        examples = [str(item).strip() for item in plan.get('rhythm_examples', []) if str(item).strip()]
+        bank_context = format_examples_for_prompt(plan.get('examples', []), language)
+        if bank_context:
+            lines.append('Reference examples are for pacing and relational texture only; do not copy their language:')
+            lines.append(bank_context)
+        elif examples:
+            lines.append('- Rhythm references, not text to copy:')
+            lines.extend(f'  - {example}' for example in examples[:2])
+        return '\n'.join(lines)
     lines = [
         '本轮对话表演方向:\n'
         f'- 对话类别: {plan.get("category", "daily")}\n'
@@ -379,7 +401,7 @@ def format_response_plan_context(plan: dict[str, Any], language: str = 'zh') -> 
         f'- 风格要求: {plan.get("style_directive", "")}'
     ]
     examples = [str(item).strip() for item in plan.get('rhythm_examples', []) if str(item).strip()]
-    bank_context = format_examples_for_prompt(plan.get('examples', []))
+    bank_context = format_examples_for_prompt(plan.get('examples', []), language)
     if bank_context:
         lines.append(bank_context)
     elif examples:
