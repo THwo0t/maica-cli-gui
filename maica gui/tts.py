@@ -43,6 +43,7 @@ def clean_tts_text(text: str) -> str:
             continue
         cleaned_lines.append(line)
     text = ' '.join(cleaned_lines)
+    text = re.split(r'\[(?:debug|mtrigger[^\]]*)\]', text, maxsplit=1, flags=re.I)[0]
 
     # Remove common stage directions: (smiles), （轻轻握住你的手）, [emotion], *sighs*.
     paired_patterns = [

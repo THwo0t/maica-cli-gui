@@ -1,0 +1,77 @@
+# MAICA CLI GUI
+
+A MAICA/MAS-inspired local desktop companion prototype.
+
+The project currently focuses on an independent PySide6 GUI. The CLI remains a
+debugger and maintenance console. Native Live2D is intentionally not included
+yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
+
+## Current Features
+
+- OpenAI-compatible chat backend.
+- MAICA/MAS-style context planning, memory, profile, affection, facts, and events.
+- Independent PySide6 GUI.
+- Layered Monika PNG avatar with expression mapping.
+- Runtime context strip with date/time, affection, relationship stage, and today events.
+- Day/night spaceroom background switching.
+- Aliyun Bailian CosyVoice TTS provider.
+- Windows SAPI fallback TTS.
+- Windows Speech Recognition STT MVP.
+- GUI Data Manager for profile, memories, facts, and safe debug snapshots.
+- GUI Settings for common non-secret options.
+- CLI debugger for advanced maintenance.
+
+## Run
+
+```powershell
+python "maica gui\gui_app.py"
+```
+
+If needed:
+
+```powershell
+py -3.13 "maica gui\gui_app.py"
+```
+
+## Configuration
+
+Private runtime configuration lives in:
+
+```text
+maica cli/config.json
+```
+
+This file is ignored by Git. API keys, local databases, logs, model files,
+runtime caches, and raw MAS assets are not committed.
+
+Use:
+
+```text
+maica cli/config.example.json
+```
+
+as the public-safe template.
+
+## Smoke Test
+
+Run the lightweight local test suite:
+
+```powershell
+python "maica gui\smoke_tests.py"
+```
+
+The smoke test checks Python compilation, public JSON config validity, TTS text
+cleaning, STT disabled-provider behavior, and GUI offscreen startup.
+
+## Releases
+
+Each stable increment is tagged and published as a GitHub Release. The latest
+release is the recommended restore point.
+
+## Safety Notes
+
+- Do not commit `config.json`, `maica_cli.db`, `logs/`, `.tts_cache/`, model
+  directories, or raw MAS assets.
+- GUI settings intentionally do not expose API keys.
+- Debug exports hide secret-like config values, but may include local profile or
+  memory content if you choose to export them.
