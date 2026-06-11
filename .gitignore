@@ -1,0 +1,51 @@
+# Default deny: this workspace contains upstream projects, model files, MAS assets,
+# local databases, and private config. Explicitly unignore the MAICA CLI/GUI work.
+*
+
+!.gitignore
+
+# Main source
+!maica cli/
+!maica cli/**
+maica cli/config.json
+maica cli/maica_cli.db
+maica cli/*.db
+maica cli/logs/
+maica cli/__pycache__/
+maica cli/**/__pycache__/
+maica cli/data/*.faiss
+maica cli/data/*_meta.jsonl
+
+# Sanitized factory snapshot
+!maica cli factory/
+!maica cli factory/**
+maica cli factory/config.json
+maica cli factory/*.db
+maica cli factory/logs/
+maica cli factory/__pycache__/
+maica cli factory/**/__pycache__/
+maica cli factory/data/*.faiss
+maica cli factory/data/*_meta.jsonl
+
+# GUI source
+!maica gui/
+!maica gui/**
+maica gui/*.db
+maica gui/__pycache__/
+maica gui/**/__pycache__/
+
+# GUI runtime assets only. Do not commit the full copied MAS raw asset tree.
+!maica gui assets/
+!maica gui assets/README.md
+!maica gui assets/copy_summary.json
+!maica gui assets/runtime/
+!maica gui assets/runtime/**
+maica gui assets/mas_raw/
+
+# Asset inventory metadata, not the raw MAS source tree.
+!maica gui asset inventory/
+!maica gui asset inventory/**
+
+# Local archives and external source/model directories remain ignored by default:
+# MAICA/, MAICA_ChatSubmod/, MAICA_Server_Submod/, MAS/, Qwen3-Embedding-0.6B/,
+# MAICA_ds_basis/, *.zip, *.rpa, *.safetensors, etc.

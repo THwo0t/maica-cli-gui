@@ -1,0 +1,9 @@
+# Core MAICA CLI keeps runtime dependencies optional.
+#
+# Optional vector/RAG dependencies for v0.7.0:
+# Install these before using /vector build.
+numpy
+torch
+transformers
+sentence-transformers
+faiss-cpu

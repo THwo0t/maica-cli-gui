@@ -1,0 +1,74 @@
+{
+  "version": "0.8.1",
+  "generated_at": "2026-05-27T15:51:13",
+  "runtime_root": "maica gui assets/runtime",
+  "source_root": "maica gui assets/mas_raw/game",
+  "assets": {
+    "background_default": "backgrounds/spaceroom.png",
+    "background_night": "backgrounds/spaceroom-night.png",
+    "background_rain": "backgrounds/spaceroom-rain.png",
+    "weather_day": "weather/def_day_mask_fb.png",
+    "weather_night": "weather/def_night_mask_fb.png",
+    "ui_textbox": "ui/textbox_monika_d.png",
+    "ui_namebox": "ui/namebox_d.png",
+    "monika_layers": [
+      "monika/hair/def-0.png",
+      "monika/base/body-def-0.png",
+      "monika/base/body-def-1.png",
+      "monika/clothes/body-def-0.png",
+      "monika/clothes/body-def-1.png",
+      "monika/base/body-def-head.png",
+      "monika/base/arms-steepling-10.png",
+      "monika/clothes/arms-steepling-10.png",
+      "monika/table/table-def.png"
+    ],
+    "expressions": {
+      "neutral": [
+        "monika/face/neutral-eyes.png",
+        "monika/face/neutral-eyebrows.png",
+        "monika/face/neutral-mouth.png",
+        "monika/face/neutral-nose.png"
+      ],
+      "smile": [
+        "monika/face/smile-eyes.png",
+        "monika/face/smile-eyebrows.png",
+        "monika/face/smile-mouth.png",
+        "monika/face/smile-nose.png"
+      ],
+      "shy": [
+        "monika/face/shy-eyes.png",
+        "monika/face/shy-eyebrows.png",
+        "monika/face/shy-mouth.png",
+        "monika/face/shy-blush.png",
+        "monika/face/shy-nose.png"
+      ],
+      "concerned": [
+        "monika/face/concerned-eyes.png",
+        "monika/face/concerned-eyebrows.png",
+        "monika/face/concerned-mouth.png",
+        "monika/face/concerned-nose.png"
+      ],
+      "playful": [
+        "monika/face/playful-eyes.png",
+        "monika/face/playful-eyebrows.png",
+        "monika/face/playful-mouth.png",
+        "monika/face/playful-nose.png"
+      ],
+      "thinking": [
+        "monika/face/thinking-eyes.png",
+        "monika/face/thinking-eyebrows.png",
+        "monika/face/thinking-mouth.png",
+        "monika/face/thinking-nose.png"
+      ]
+    },
+    "monika_front_layers": [
+      "monika/hair/def-10.png"
+    ]
+  },
+  "notes": [
+    "GUI reads this runtime subset only.",
+    "MAS raw assets remain copied separately for later expansion.",
+    "Monika is currently rendered as layered PNGs, not native Live2D.",
+    "Layer order fixed: back hair below head, front hair above head."
+  ]
+}

@@ -1,0 +1,185 @@
+﻿{
+    "generated_at":  "2026-05-27T15:39:24",
+    "source_roots":  [
+                         "MAS/game/mod_assets",
+                         "MAS/game/gui",
+                         "MAS/game/*.rpa"
+                     ],
+    "total_assets":  1799,
+    "by_category":  [
+                        {
+                            "category":  "bgm_audio",
+                            "count":  7
+                        },
+                        {
+                            "category":  "calendar_assets",
+                            "count":  30
+                        },
+                        {
+                            "category":  "character_accessory_layers",
+                            "count":  321
+                        },
+                        {
+                            "category":  "character_body_base_layers",
+                            "count":  17
+                        },
+                        {
+                            "category":  "character_cg",
+                            "count":  2
+                        },
+                        {
+                            "category":  "character_clothes_layers",
+                            "count":  484
+                        },
+                        {
+                            "category":  "character_definition_json",
+                            "count":  155
+                        },
+                        {
+                            "category":  "character_face_expression_layers",
+                            "count":  101
+                        },
+                        {
+                            "category":  "character_hair_layers",
+                            "count":  100
+                        },
+                        {
+                            "category":  "character_table_pose_layers",
+                            "count":  3
+                        },
+                        {
+                            "category":  "console_assets",
+                            "count":  1
+                        },
+                        {
+                            "category":  "custom_button_assets",
+                            "count":  30
+                        },
+                        {
+                            "category":  "desk_and_table_props",
+                            "count":  5
+                        },
+                        {
+                            "category":  "event_birthday_room_decor",
+                            "count":  14
+                        },
+                        {
+                            "category":  "event_christmas_room_decor",
+                            "count":  22
+                        },
+                        {
+                            "category":  "event_halloween_room_decor",
+                            "count":  24
+                        },
+                        {
+                            "category":  "font_assets",
+                            "count":  5
+                        },
+                        {
+                            "category":  "frame_assets",
+                            "count":  20
+                        },
+                        {
+                            "category":  "minigame_assets",
+                            "count":  130
+                        },
+                        {
+                            "category":  "poem_assets",
+                            "count":  15
+                        },
+                        {
+                            "category":  "props_effects_misc",
+                            "count":  12
+                        },
+                        {
+                            "category":  "renpy_gui_assets",
+                            "count":  24
+                        },
+                        {
+                            "category":  "room_backgrounds",
+                            "count":  6
+                        },
+                        {
+                            "category":  "rpa_archive",
+                            "count":  4
+                        },
+                        {
+                            "category":  "sfx_audio",
+                            "count":  28
+                        },
+                        {
+                            "category":  "special_location_backgrounds",
+                            "count":  1
+                        },
+                        {
+                            "category":  "thumbnail_assets",
+                            "count":  198
+                        },
+                        {
+                            "category":  "uncategorized",
+                            "count":  20
+                        },
+                        {
+                            "category":  "weather_window_masks",
+                            "count":  20
+                        }
+                    ],
+    "by_extension":  [
+                         {
+                             "extension":  "",
+                             "count":  7
+                         },
+                         {
+                             "extension":  ".exe",
+                             "count":  2
+                         },
+                         {
+                             "extension":  ".jpg",
+                             "count":  1
+                         },
+                         {
+                             "extension":  ".json",
+                             "count":  158
+                         },
+                         {
+                             "extension":  ".mp3",
+                             "count":  17
+                         },
+                         {
+                             "extension":  ".mp4",
+                             "count":  6
+                         },
+                         {
+                             "extension":  ".mpg",
+                             "count":  4
+                         },
+                         {
+                             "extension":  ".ogg",
+                             "count":  30
+                         },
+                         {
+                             "extension":  ".otf",
+                             "count":  2
+                         },
+                         {
+                             "extension":  ".png",
+                             "count":  1558
+                         },
+                         {
+                             "extension":  ".rpa",
+                             "count":  4
+                         },
+                         {
+                             "extension":  ".ttf",
+                             "count":  3
+                         },
+                         {
+                             "extension":  ".txt",
+                             "count":  2
+                         },
+                         {
+                             "extension":  ".wav",
+                             "count":  5
+                         }
+                     ]
+}
