@@ -85,6 +85,16 @@
   "tts_auto_play": true,
   "tts_rate": 0,
   "tts_volume": 90,
+  "tts_bailian_api_key": "",
+  "tts_bailian_endpoint": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+  "tts_bailian_model": "cosyvoice-v3.5-plus",
+  "tts_bailian_voice": "",
+  "tts_bailian_sample_rate": 22050,
+  "tts_bailian_volume": 50,
+  "tts_bailian_rate": 1.0,
+  "tts_bailian_pitch": 1.0,
+  "tts_bailian_timeout": 30,
+  "tts_bailian_instruction": "语气自然温柔，像恋人日常聊天，带一点俏皮。",
   "special_events": [
     {
       "date": "01-01",

@@ -7,3 +7,6 @@ torch
 transformers
 sentence-transformers
 faiss-cpu
+
+# Optional GUI TTS provider for Aliyun Bailian CosyVoice.
+websocket-client

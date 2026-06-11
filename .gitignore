@@ -33,6 +33,7 @@ maica cli factory/data/*_meta.jsonl
 maica gui/*.db
 maica gui/__pycache__/
 maica gui/**/__pycache__/
+maica gui/.tts_cache/
 
 # GUI runtime assets only. Do not commit the full copied MAS raw asset tree.
 !maica gui assets/

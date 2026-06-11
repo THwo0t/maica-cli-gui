@@ -74,9 +74,9 @@ class GuiEngineWorker(QObject):
         )
         if report.get('ok'):
             dim = report.get('dimension') or '?'
-            self.status.emit(f'向量模型已就绪: {dim}d')
+            self.status.emit(f'向量模型已就绪：{dim}d')
         else:
-            self.status.emit(f'向量模型预热失败: {report.get("error")}')
+            self.status.emit(f'向量模型预热失败：{report.get("error")}')
 
     @Slot(str)
     def chat(self, text: str) -> None:

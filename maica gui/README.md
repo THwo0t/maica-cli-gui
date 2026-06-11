@@ -1,8 +1,9 @@
-# MAICA GUI v0.8.2
+# MAICA GUI v0.8.3
 
 Independent PySide6 GUI frontend for MAICA.
 
-The GUI does not start or drive the CLI. It imports `maica cli/engine.py` directly, while `maica_cli.py` remains available as a debugger console.
+The GUI does not start or drive the CLI. It imports `maica cli/engine.py`
+directly, while `maica_cli.py` remains available as a debugger console.
 
 ## Run
 
@@ -32,7 +33,9 @@ The full copied MAS asset snapshot is stored at:
 maica gui assets/mas_raw
 ```
 
-The runtime subset is intentionally small. It contains a spaceroom background, several Monika PNG layers, common expression layers, and GUI textbox/namebox assets.
+The runtime subset is intentionally small. It contains a spaceroom background,
+several Monika PNG layers, common expression layers, and GUI textbox/namebox
+assets.
 
 ## Current Scope
 
@@ -42,24 +45,14 @@ The runtime subset is intentionally small. It contains a spaceroom background, s
 - Layered PNG avatar preview.
 - Emotion metadata changes the visible expression preset.
 - MTrigger notices are shown in the chat log.
-- Windows SAPI TTS MVP with a GUI on/off button.
+- Windows SAPI TTS and Aliyun Bailian CosyVoice TTS.
 - Persistent background engine worker, so GUI no longer rebuilds the engine every turn.
-
-## Not Yet Included
-
-- Native Live2D model loading.
-- STT.
-- Full MAS outfit/accessory parser.
-- Event decoration switching.
-- Packaged `.exe`.
-
-Those should be built after the GUI loop and asset runtime manifest are stable.
 
 ## TTS
 
-v0.8.2 adds a dependency-light Windows SAPI TTS adapter.
+The GUI supports provider-style TTS adapters.
 
-Config keys:
+### Windows SAPI
 
 ```json
 {
@@ -72,9 +65,31 @@ Config keys:
 }
 ```
 
-The GUI button can toggle TTS at runtime. This runtime toggle does not rewrite
-`config.json`; use the CLI debugger `/config set tts_enabled true` if you want
-TTS enabled by default.
+### Aliyun Bailian CosyVoice
+
+`tts_bailian_api_key` belongs only in your ignored local
+`maica cli/config.json`. Do not put it in `config.example.json`.
+
+```json
+{
+  "tts_enabled": true,
+  "tts_provider": "bailian_cosyvoice",
+  "tts_bailian_api_key": "",
+  "tts_bailian_endpoint": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+  "tts_bailian_model": "cosyvoice-v3.5-plus",
+  "tts_bailian_voice": "",
+  "tts_bailian_sample_rate": 22050,
+  "tts_bailian_volume": 50,
+  "tts_bailian_rate": 1.0,
+  "tts_bailian_pitch": 1.0,
+  "tts_bailian_timeout": 30,
+  "tts_bailian_instruction": "语气自然温柔，像恋人日常聊天，带一点俏皮。"
+}
+```
+
+The current adapter requests WAV audio and plays it through a child PowerShell
+`System.Media.SoundPlayer` process. This keeps network synthesis and playback
+outside the Qt main thread.
 
 ## Vector Retrieval In GUI
 
@@ -92,3 +107,11 @@ This avoids a PySide6 worker-thread crash observed when sentence-transformers
 loads or encodes embeddings inside the GUI worker. The long-term fix is to move
 embedding retrieval into a separate subprocess/service, then let the GUI call
 that service instead of loading the embedding model inside a Qt worker thread.
+
+## Not Yet Included
+
+- Native Live2D model loading.
+- STT.
+- Full MAS outfit/accessory parser.
+- Event decoration switching.
+- Packaged `.exe`.
