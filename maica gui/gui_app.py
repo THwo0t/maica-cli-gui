@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.8.5.
+"""MAICA GUI v0.8.6.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -16,7 +16,10 @@ from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
+    QComboBox,
     QDialog,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QFrame,
@@ -42,7 +45,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.8.5'
+APP_VERSION = '0.8.6'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -53,6 +56,9 @@ from tts import create_tts  # noqa: E402
 
 
 PROFILE_FIELDS = ('player_name', 'birthday', 'location', 'nicknames', 'affection')
+LANGUAGE_OPTIONS = ('en', 'zh')
+MODE_OPTIONS = ('hybrid', 'rule', 'off')
+TTS_PROVIDERS = ('bailian_cosyvoice', 'windows_sapi', 'off')
 
 
 def html_escape(text: str) -> str:
@@ -272,6 +278,127 @@ class DataManagerDialog(QDialog):
             self.owner.debug_export_requested.emit(path)
 
 
+class SettingsDialog(QDialog):
+    def __init__(self, owner: 'MainWindow') -> None:
+        super().__init__(owner)
+        self.owner = owner
+        self.setWindowTitle('MAICA Settings')
+        self.resize(560, 520)
+        self._build_ui()
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+
+        self.api_base = QLineEdit()
+        self.model = QLineEdit()
+        self.language = QComboBox()
+        self.language.addItems(LANGUAGE_OPTIONS)
+        self.temperature = QDoubleSpinBox()
+        self.temperature.setRange(0.0, 2.0)
+        self.temperature.setSingleStep(0.01)
+        self.temperature.setDecimals(2)
+        self.top_p = QDoubleSpinBox()
+        self.top_p.setRange(0.0, 1.0)
+        self.top_p.setSingleStep(0.01)
+        self.top_p.setDecimals(2)
+        self.max_tokens = QSpinBox()
+        self.max_tokens.setRange(64, 8192)
+        self.mfocus_mode = QComboBox()
+        self.mfocus_mode.addItems(MODE_OPTIONS)
+        self.mtrigger_mode = QComboBox()
+        self.mtrigger_mode.addItems(MODE_OPTIONS)
+        self.show_debug = QCheckBox('Show debug in CLI/engine logs')
+        self.gui_disable_thread_embeddings = QCheckBox('Disable GUI thread embeddings')
+
+        self.tts_enabled = QCheckBox('Enable TTS by default')
+        self.tts_provider = QComboBox()
+        self.tts_provider.addItems(TTS_PROVIDERS)
+        self.tts_model = QLineEdit()
+        self.tts_voice = QLineEdit()
+        self.tts_format = QComboBox()
+        self.tts_format.addItems(('mp3', 'wav'))
+        self.tts_instruction = QLineEdit()
+
+        form.addRow('API base', self.api_base)
+        form.addRow('Model', self.model)
+        form.addRow('Language', self.language)
+        form.addRow('Temperature', self.temperature)
+        form.addRow('Top P', self.top_p)
+        form.addRow('Max tokens', self.max_tokens)
+        form.addRow('MFocus mode', self.mfocus_mode)
+        form.addRow('MTrigger mode', self.mtrigger_mode)
+        form.addRow('', self.show_debug)
+        form.addRow('', self.gui_disable_thread_embeddings)
+        form.addRow('', self.tts_enabled)
+        form.addRow('TTS provider', self.tts_provider)
+        form.addRow('Bailian model', self.tts_model)
+        form.addRow('Bailian voice', self.tts_voice)
+        form.addRow('Bailian format', self.tts_format)
+        form.addRow('Bailian instruction', self.tts_instruction)
+        layout.addLayout(form)
+
+        note = QLabel('Secrets such as API keys are intentionally not shown here. Edit local config.json if needed.')
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        button_row = QHBoxLayout()
+        save = QPushButton('Save settings')
+        close = QPushButton('Close')
+        save.clicked.connect(self.save)
+        close.clicked.connect(self.close)
+        button_row.addStretch(1)
+        button_row.addWidget(save)
+        button_row.addWidget(close)
+        layout.addLayout(button_row)
+
+    def render(self, config: dict[str, Any]) -> None:
+        self.api_base.setText(str(config.get('api_base') or ''))
+        self.model.setText(str(config.get('model') or ''))
+        self._set_combo(self.language, str(config.get('language') or 'en'))
+        self.temperature.setValue(float(config.get('temperature') or 0.22))
+        self.top_p.setValue(float(config.get('top_p') or 0.7))
+        self.max_tokens.setValue(int(config.get('max_tokens') or 900))
+        self._set_combo(self.mfocus_mode, str(config.get('mfocus_mode') or 'hybrid'))
+        self._set_combo(self.mtrigger_mode, str(config.get('mtrigger_mode') or 'hybrid'))
+        self.show_debug.setChecked(bool(config.get('show_debug', True)))
+        self.gui_disable_thread_embeddings.setChecked(bool(config.get('gui_disable_thread_embeddings', True)))
+        self.tts_enabled.setChecked(bool(config.get('tts_enabled', False)))
+        self._set_combo(self.tts_provider, str(config.get('tts_provider') or 'windows_sapi'))
+        self.tts_model.setText(str(config.get('tts_bailian_model') or ''))
+        self.tts_voice.setText(str(config.get('tts_bailian_voice') or ''))
+        self._set_combo(self.tts_format, str(config.get('tts_bailian_format') or 'mp3'))
+        self.tts_instruction.setText(str(config.get('tts_bailian_instruction') or ''))
+
+    def _set_combo(self, combo: QComboBox, value: str) -> None:
+        index = combo.findText(value)
+        if index < 0:
+            combo.addItem(value)
+            index = combo.findText(value)
+        combo.setCurrentIndex(max(0, index))
+
+    def save(self) -> None:
+        updates = {
+            'api_base': self.api_base.text().strip(),
+            'model': self.model.text().strip(),
+            'language': self.language.currentText(),
+            'temperature': self.temperature.value(),
+            'top_p': self.top_p.value(),
+            'max_tokens': self.max_tokens.value(),
+            'mfocus_mode': self.mfocus_mode.currentText(),
+            'mtrigger_mode': self.mtrigger_mode.currentText(),
+            'show_debug': self.show_debug.isChecked(),
+            'gui_disable_thread_embeddings': self.gui_disable_thread_embeddings.isChecked(),
+            'tts_enabled': self.tts_enabled.isChecked(),
+            'tts_provider': self.tts_provider.currentText(),
+            'tts_bailian_model': self.tts_model.text().strip(),
+            'tts_bailian_voice': self.tts_voice.text().strip(),
+            'tts_bailian_format': self.tts_format.currentText(),
+            'tts_bailian_instruction': self.tts_instruction.text().strip(),
+        }
+        self.owner.config_save_requested.emit(updates)
+
+
 class BackgroundWidget(QWidget):
     def __init__(self, background: QPixmap, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -305,6 +432,7 @@ class MainWindow(QMainWindow):
     fact_add_requested = Signal(str, str, int)
     fact_delete_requested = Signal(int)
     debug_export_requested = Signal(str)
+    config_save_requested = Signal(dict)
 
     def __init__(self) -> None:
         super().__init__()
@@ -319,6 +447,8 @@ class MainWindow(QMainWindow):
         self.tts_enabled = False
         self.last_tts_error = ''
         self.data_dialog: DataManagerDialog | None = None
+        self.settings_dialog: SettingsDialog | None = None
+        self.current_config: dict[str, Any] = {}
 
         self.setWindowTitle(f'MAICA GUI v{APP_VERSION}')
         self.resize(1180, 760)
@@ -346,6 +476,7 @@ class MainWindow(QMainWindow):
         self.fact_add_requested.connect(self.worker.add_fact)
         self.fact_delete_requested.connect(self.worker.delete_fact)
         self.debug_export_requested.connect(self.worker.export_debug)
+        self.config_save_requested.connect(self.worker.save_config)
 
     def _build_ui(self) -> None:
         root = BackgroundWidget(self.assets.background())
@@ -400,18 +531,21 @@ class MainWindow(QMainWindow):
         self.tts_button = QPushButton('TTS: off')
         self.stop_tts_button = QPushButton('停止语音')
         self.data_button = QPushButton('Data')
+        self.settings_button = QPushButton('Settings')
         self.clear_button = QPushButton('清屏')
         self.send_button.clicked.connect(self.send_chat)
         self.spire_button.clicked.connect(self.send_spire)
         self.tts_button.clicked.connect(self.toggle_tts)
         self.stop_tts_button.clicked.connect(self.stop_tts)
         self.data_button.clicked.connect(self.open_data_manager)
+        self.settings_button.clicked.connect(self.open_settings)
         self.clear_button.clicked.connect(self.chat_view.clear)
         button_row.addWidget(self.send_button)
         button_row.addWidget(self.spire_button)
         button_row.addWidget(self.tts_button)
         button_row.addWidget(self.stop_tts_button)
         button_row.addWidget(self.data_button)
+        button_row.addWidget(self.settings_button)
         button_row.addWidget(self.clear_button)
         right_layout.addLayout(button_row)
 
@@ -508,11 +642,14 @@ class MainWindow(QMainWindow):
             self.add_system_message(f'后台引擎初始化失败：{result.get("error", "unknown error")}')
 
     def _handle_config_ready(self, config: dict[str, Any]) -> None:
+        self.current_config = dict(config)
         self.tts = create_tts(config)
         self.tts_enabled = bool(config.get('tts_enabled', False))
         self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
         provider = str(config.get('tts_provider') or 'windows_sapi')
         self.add_system_message(f'TTS provider: {provider} · {"on" if self.tts_enabled else "off"}')
+        if self.settings_dialog is not None:
+            self.settings_dialog.render(self.current_config)
 
     def toggle_tts(self) -> None:
         self.tts_enabled = not self.tts_enabled
@@ -532,6 +669,14 @@ class MainWindow(QMainWindow):
         self.data_dialog.activateWindow()
         self.request_data_snapshot()
 
+    def open_settings(self) -> None:
+        if self.settings_dialog is None:
+            self.settings_dialog = SettingsDialog(self)
+        self.settings_dialog.render(self.current_config)
+        self.settings_dialog.show()
+        self.settings_dialog.raise_()
+        self.settings_dialog.activateWindow()
+
     def request_data_snapshot(self) -> None:
         self.data_snapshot_requested.emit()
 
@@ -543,6 +688,16 @@ class MainWindow(QMainWindow):
         notice = str(payload.get('notice') or '').strip()
         if notice:
             self.add_system_message(notice)
+        config = payload.get('config')
+        if isinstance(config, dict):
+            self.current_config.update(config)
+        if payload.get('action') == 'save_config':
+            self.tts = create_tts(self.current_config)
+            self.tts_enabled = bool(self.current_config.get('tts_enabled', False))
+            self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
+            self.add_system_message('Settings saved. Restart GUI if you changed core model/API options.')
+            if self.settings_dialog is not None:
+                self.settings_dialog.render(self.current_config)
         if self.data_dialog is not None:
             self.data_dialog.render(payload)
 

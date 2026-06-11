@@ -20,6 +20,7 @@ if str(CLI_DIR) not in sys.path:
 from embedding_index import prewarm_embedding_model  # noqa: E402
 from engine import MaicaEngine  # noqa: E402
 from mfocus import status_summary  # noqa: E402
+from config_io import save_json  # noqa: E402
 
 
 class GuiEngineWorker(QObject):
@@ -122,6 +123,10 @@ class GuiEngineWorker(QObject):
     def export_debug(self, path: str) -> None:
         self._run_data_action('export_debug', path=path)
 
+    @Slot(dict)
+    def save_config(self, updates: dict) -> None:
+        self._run_data_action('save_config', updates=updates)
+
     def _run_request(self, mode: str, text: str) -> None:
         try:
             if self.engine is None:
@@ -200,6 +205,12 @@ class GuiEngineWorker(QObject):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(self._debug_payload(engine), encoding='utf-8')
                     notice = f'Exported debug info: {target}'
+            elif action == 'save_config':
+                updates = kwargs.get('updates') if isinstance(kwargs.get('updates'), dict) else {}
+                applied = self._apply_config_updates(engine, updates)
+                if applied:
+                    save_json(engine.config_path, engine.config)
+                    notice = f'Saved config: {", ".join(applied)}'
 
             payload = self._data_snapshot(engine)
             payload.update({'ok': True, 'action': action, 'notice': notice, 'error': ''})
@@ -233,10 +244,17 @@ class GuiEngineWorker(QObject):
             'api_base',
             'model',
             'language',
+            'temperature',
+            'top_p',
+            'max_tokens',
             'mfocus_mode',
             'mtrigger_mode',
             'tts_enabled',
             'tts_provider',
+            'tts_bailian_model',
+            'tts_bailian_voice',
+            'tts_bailian_format',
+            'tts_bailian_instruction',
             'embedding_enabled',
             'memory_embedding_enabled',
             'gui_disable_thread_embeddings',
@@ -254,3 +272,45 @@ class GuiEngineWorker(QObject):
 
         payload = self._data_snapshot(engine)
         return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
+
+    def _apply_config_updates(self, engine: MaicaEngine, updates: dict[str, Any]) -> list[str]:
+        allowed = {
+            'api_base': str,
+            'model': str,
+            'language': str,
+            'temperature': float,
+            'top_p': float,
+            'max_tokens': int,
+            'mfocus_mode': str,
+            'mtrigger_mode': str,
+            'show_debug': bool,
+            'tts_enabled': bool,
+            'tts_provider': str,
+            'tts_bailian_model': str,
+            'tts_bailian_voice': str,
+            'tts_bailian_format': str,
+            'tts_bailian_instruction': str,
+            'gui_disable_thread_embeddings': bool,
+        }
+        applied: list[str] = []
+        for key, caster in allowed.items():
+            if key not in updates:
+                continue
+            value = updates[key]
+            try:
+                if caster is bool:
+                    if isinstance(value, str):
+                        value = value.strip().lower() in {'1', 'true', 'yes', 'on'}
+                    else:
+                        value = bool(value)
+                elif caster is int:
+                    value = int(value)
+                elif caster is float:
+                    value = float(value)
+                else:
+                    value = str(value).strip()
+            except (TypeError, ValueError):
+                continue
+            engine.config[key] = value
+            applied.append(key)
+        return applied

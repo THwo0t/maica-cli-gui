@@ -1,4 +1,4 @@
-# MAICA GUI v0.8.5
+# MAICA GUI v0.8.6
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -49,6 +49,7 @@ assets.
 - Windows SAPI TTS and Aliyun Bailian CosyVoice TTS.
 - Persistent background engine worker, so GUI no longer rebuilds the engine every turn.
 - Data Manager dialog for profile, nicknames, affection, memories, facts, and safe debug snapshots.
+- Settings dialog for common non-secret runtime options.
 
 ## TTS
 
@@ -129,6 +130,20 @@ Current scope:
 
 Database writes are performed inside the GUI engine worker thread, not directly
 from the Qt main thread.
+
+## Settings
+
+Use the `Settings` button to edit common non-secret options:
+
+- API base and model name.
+- Output language.
+- Temperature, top-p, and max tokens.
+- MFocus/MTrigger mode.
+- TTS provider and Bailian voice/model/format/instruction.
+- GUI thread embedding safety toggle.
+
+Secrets such as API keys are intentionally not displayed in the GUI settings
+dialog. Keep editing those only in the ignored local `maica cli/config.json`.
 
 ## Not Yet Included
 
