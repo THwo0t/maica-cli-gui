@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.9.1.
+"""MAICA GUI v0.9.2.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -47,7 +47,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.9.1'
+APP_VERSION = '0.9.2'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -63,6 +63,7 @@ LANGUAGE_OPTIONS = ('en', 'zh')
 MODE_OPTIONS = ('hybrid', 'rule', 'off')
 TTS_PROVIDERS = ('bailian_cosyvoice', 'windows_sapi', 'off')
 STT_PROVIDERS = ('windows_speech', 'off')
+BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
 
 
 def html_escape(text: str) -> str:
@@ -320,6 +321,8 @@ class SettingsDialog(QDialog):
         self.gui_disable_thread_embeddings = QCheckBox('Disable GUI thread embeddings')
         self.embedding_service_port = QSpinBox()
         self.embedding_service_port.setRange(1024, 65535)
+        self.gui_background_mode = QComboBox()
+        self.gui_background_mode.addItems(BACKGROUND_MODES)
 
         self.tts_enabled = QCheckBox('Enable TTS by default')
         self.tts_provider = QComboBox()
@@ -351,6 +354,7 @@ class SettingsDialog(QDialog):
         form.addRow('', self.embedding_service_autostart)
         form.addRow('Embedding service port', self.embedding_service_port)
         form.addRow('', self.gui_disable_thread_embeddings)
+        form.addRow('Background mode', self.gui_background_mode)
         form.addRow('', self.tts_enabled)
         form.addRow('TTS provider', self.tts_provider)
         form.addRow('Bailian model', self.tts_model)
@@ -392,6 +396,7 @@ class SettingsDialog(QDialog):
         self.embedding_service_autostart.setChecked(bool(config.get('embedding_service_autostart', True)))
         self.embedding_service_port.setValue(int(config.get('embedding_service_port') or 8766))
         self.gui_disable_thread_embeddings.setChecked(bool(config.get('gui_disable_thread_embeddings', True)))
+        self._set_combo(self.gui_background_mode, str(config.get('gui_background_mode') or 'auto'))
         self.tts_enabled.setChecked(bool(config.get('tts_enabled', False)))
         self._set_combo(self.tts_provider, str(config.get('tts_provider') or 'windows_sapi'))
         self.tts_model.setText(str(config.get('tts_bailian_model') or ''))
@@ -426,6 +431,7 @@ class SettingsDialog(QDialog):
             'embedding_service_autostart': self.embedding_service_autostart.isChecked(),
             'embedding_service_port': self.embedding_service_port.value(),
             'gui_disable_thread_embeddings': self.gui_disable_thread_embeddings.isChecked(),
+            'gui_background_mode': self.gui_background_mode.currentText(),
             'tts_enabled': self.tts_enabled.isChecked(),
             'tts_provider': self.tts_provider.currentText(),
             'tts_bailian_model': self.tts_model.text().strip(),
@@ -503,7 +509,7 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._connect_worker()
         self.set_emotion('smile')
-        self.add_system_message('MAICA GUI 已启动。CLI 现在只作为 debugger 使用。')
+        self.add_system_message('MAICA GUI started. CLI is available as a debugger.')
         self.thread.start()
 
     def _connect_worker(self) -> None:
@@ -527,7 +533,7 @@ class MainWindow(QMainWindow):
         self.stt_finished.connect(self._handle_stt_finished)
 
     def _build_ui(self) -> None:
-        self.root_widget = BackgroundWidget(self.assets.background_for_hour(dt.datetime.now().hour))
+        self.root_widget = BackgroundWidget(self.background_for_now())
         root = self.root_widget
         self.setCentralWidget(root)
 
@@ -573,20 +579,20 @@ class MainWindow(QMainWindow):
 
         self.input_box = QTextEdit()
         self.input_box.setObjectName('inputBox')
-        self.input_box.setPlaceholderText('输入想对 Monika 说的话。Ctrl+Enter 发送。')
+        self.input_box.setPlaceholderText('Type a message for Monika. Ctrl+Enter to send.')
         self.input_box.setMaximumHeight(92)
         self.input_box.installEventFilter(self)
         right_layout.addWidget(self.input_box)
 
         button_row = QHBoxLayout()
-        self.send_button = QPushButton('发送')
+        self.send_button = QPushButton('Send')
         self.spire_button = QPushButton('/spire')
         self.tts_button = QPushButton('TTS: off')
-        self.stop_tts_button = QPushButton('停止语音')
+        self.stop_tts_button = QPushButton('Stop voice')
         self.listen_button = QPushButton('Listen')
         self.data_button = QPushButton('Data')
         self.settings_button = QPushButton('Settings')
-        self.clear_button = QPushButton('清屏')
+        self.clear_button = QPushButton('Clear')
         self.send_button.clicked.connect(self.send_chat)
         self.spire_button.clicked.connect(self.send_spire)
         self.tts_button.clicked.connect(self.toggle_tts)
@@ -625,7 +631,7 @@ class MainWindow(QMainWindow):
         self.thread.quit()
         if not self.thread.wait(30000):
             event.ignore()
-            self.add_system_message('后台引擎仍在关闭，请稍等几秒后再退出。')
+            self.add_system_message('The backend is still shutting down. Please try closing again in a few seconds.')
             return
         super().closeEvent(event)
 
@@ -648,6 +654,13 @@ class MainWindow(QMainWindow):
         self.input_box.setEnabled(not busy)
         if busy:
             self.status_label.setText('thinking...')
+
+    def background_for_now(self) -> QPixmap:
+        mode = str(self.current_config.get('gui_background_mode') or 'auto')
+        return self.assets.background_for_mode(mode, dt.datetime.now().hour)
+
+    def refresh_background(self) -> None:
+        self.root_widget.set_background(self.background_for_now())
 
     def set_emotion(self, emotion: str) -> None:
         normalized = normalize_emotion(emotion)
@@ -687,19 +700,20 @@ class MainWindow(QMainWindow):
     def send_spire(self) -> None:
         hint = self.input_box.toPlainText().strip()
         self.input_box.clear()
-        self.add_system_message('/spire 正在生成主动话题...')
+        self.add_system_message('/spire is generating a proactive topic...')
         self.set_busy(True)
         self.spire_requested.emit(hint)
 
     def _handle_ready(self, result: dict[str, Any]) -> None:
         if result.get('ok'):
-            self.add_system_message('后台引擎已就绪。')
+            self.add_system_message('Backend engine is ready.')
             self.request_data_snapshot()
         else:
-            self.add_system_message(f'后台引擎初始化失败：{result.get("error", "unknown error")}')
+            self.add_system_message(f'Backend initialization failed: {result.get("error", "unknown error")}')
 
     def _handle_config_ready(self, config: dict[str, Any]) -> None:
         self.current_config = dict(config)
+        self.refresh_background()
         self.tts = create_tts(config)
         self.stt = create_stt(config)
         self.tts_enabled = bool(config.get('tts_enabled', False))
@@ -714,7 +728,7 @@ class MainWindow(QMainWindow):
         self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
         if not self.tts_enabled:
             self.tts.stop()
-        self.add_system_message('TTS 已开启。' if self.tts_enabled else 'TTS 已关闭。')
+        self.add_system_message('TTS enabled.' if self.tts_enabled else 'TTS disabled.')
 
     def stop_tts(self) -> None:
         self.tts.stop()
@@ -777,6 +791,7 @@ class MainWindow(QMainWindow):
             self.stt = create_stt(self.current_config)
             self.tts_enabled = bool(self.current_config.get('tts_enabled', False))
             self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
+            self.refresh_background()
             self.add_system_message('Settings saved. Restart GUI if you changed core model/API options.')
             if self.settings_dialog is not None:
                 self.settings_dialog.render(self.current_config)
@@ -789,7 +804,7 @@ class MainWindow(QMainWindow):
         if not status:
             return
         now = dt.datetime.now()
-        self.root_widget.set_background(self.assets.background_for_hour(now.hour))
+        self.refresh_background()
         events = status.get('today_events') if isinstance(status.get('today_events'), list) else []
         event_names: list[str] = []
         for event in events:
@@ -797,9 +812,10 @@ class MainWindow(QMainWindow):
                 name = str(event.get('name') or '').strip()
                 if name:
                     event_names.append(name)
-        event_text = ', '.join(event_names) if event_names else 'no special event'
+        event_text = 'today: ' + ', '.join(event_names) if event_names else 'ordinary day'
+        bg_mode = str(self.current_config.get('gui_background_mode') or 'auto')
         self.context_label.setText(
-            f"{now.strftime('%Y-%m-%d %H:%M')} · affection {status.get('affection', '?')} · "
+            f"{now.strftime('%Y-%m-%d %H:%M')} · bg {bg_mode} · affection {status.get('affection', '?')} · "
             f"{status.get('relationship_stage', 'relationship')} · {event_text}"
         )
 
@@ -807,7 +823,7 @@ class MainWindow(QMainWindow):
         self.set_busy(False)
         if not result.get('ok'):
             self.set_emotion('concerned')
-            self.add_system_message(f'调用失败：{result.get("error", "unknown error")}')
+            self.add_system_message(f'Request failed: {result.get("error", "unknown error")}')
             return
 
         visual_state = self.visual_state_from_result(result)

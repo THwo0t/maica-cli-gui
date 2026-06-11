@@ -358,6 +358,7 @@ class GuiEngineWorker(QObject):
             'embedding_service_port',
             'embedding_service_timeout',
             'gui_disable_thread_embeddings',
+            'gui_background_mode',
             'show_debug',
         }
         for key, value in config.items():
@@ -401,6 +402,7 @@ class GuiEngineWorker(QObject):
             'embedding_service_port': int,
             'embedding_service_timeout': int,
             'gui_disable_thread_embeddings': bool,
+            'gui_background_mode': str,
         }
         applied: list[str] = []
         for key, caster in allowed.items():

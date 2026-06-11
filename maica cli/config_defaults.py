@@ -90,6 +90,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gui_disable_thread_embeddings": True,
     "gui_prewarm_embeddings": False,
     "gui_quiet_embedding_load": True,
+    "gui_background_mode": "auto",
     "tts_enabled": False,
     "tts_provider": "windows_sapi",
     "tts_voice": "",

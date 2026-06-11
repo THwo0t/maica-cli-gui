@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.1
+# MAICA GUI v0.9.2
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -57,7 +57,7 @@ assets.
 - Data Manager dialog for profile, nicknames, affection, memories, facts, and safe debug snapshots.
 - Settings dialog for common non-secret runtime options.
 - Runtime context strip showing date/time, affection, relationship stage, and today's special events.
-- Automatic day/night background selection from the runtime asset manifest.
+- Auto/day/night/rain background selection from the runtime asset manifest.
 - STT MVP through Windows Speech Recognition with a `Listen` button.
 - Optional out-of-process embedding service for GUI vector/RAG retrieval.
 
@@ -170,6 +170,7 @@ Use the `Settings` button to edit common non-secret options:
 - MFocus/MTrigger mode.
 - TTS provider and Bailian voice/model/format/instruction.
 - Example Bank vectors, memory vectors, and external embedding service.
+- Background mode: auto, day, night, or rain.
 - GUI thread embedding safety toggle.
 
 Secrets such as API keys are intentionally not displayed in the GUI settings
@@ -186,8 +187,9 @@ and after data-manager operations. It currently shows:
 - Detected special events for today.
 
 The background switches between the default spaceroom and night spaceroom based
-on local time. Weather and holiday overlays are reserved for later resource
-expansion.
+on local time when background mode is `auto`. Settings can force `day`, `night`,
+or `rain`. The context strip shows the active mode and detected events for
+today. Rich holiday/weather overlays are reserved for later resource expansion.
 
 ## STT
 

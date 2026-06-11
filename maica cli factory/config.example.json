@@ -84,6 +84,7 @@
   "gui_disable_thread_embeddings": true,
   "gui_prewarm_embeddings": false,
   "gui_quiet_embedding_load": true,
+  "gui_background_mode": "auto",
   "tts_enabled": false,
   "tts_provider": "windows_sapi",
   "tts_voice": "",

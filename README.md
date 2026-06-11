@@ -13,7 +13,7 @@ yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
 - Independent PySide6 GUI.
 - Layered Monika PNG avatar with expression mapping.
 - Runtime context strip with date/time, affection, relationship stage, and today events.
-- Day/night spaceroom background switching.
+- Auto/day/night/rain spaceroom background modes.
 - Aliyun Bailian CosyVoice TTS provider.
 - Windows SAPI fallback TTS.
 - Windows Speech Recognition STT MVP.
@@ -77,6 +77,13 @@ python "maica gui\diagnostics.py"
 The report includes Python, Git, module availability, key path checks, and a
 safe configuration summary. Secret-like fields are reported only as present or
 empty.
+
+## GUI Background
+
+The Settings dialog supports `auto`, `day`, `night`, and `rain` background
+modes. `auto` follows local time; `rain` uses the runtime rain spaceroom asset.
+The context strip also shows the active background mode and today's detected
+events.
 
 ## GUI Vector Retrieval
 

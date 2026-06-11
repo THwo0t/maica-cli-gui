@@ -57,6 +57,19 @@ class AssetManager:
         rel_path = str(self.assets.get(key) or self.assets.get('background_default') or '')
         return self.pixmap(rel_path) if rel_path else QPixmap()
 
+    def background_for_mode(self, mode: str, hour: int) -> QPixmap:
+        value = (mode or 'auto').lower().strip()
+        key_map = {
+            'day': 'background_default',
+            'night': 'background_night',
+            'rain': 'background_rain',
+        }
+        if value == 'auto':
+            return self.background_for_hour(hour)
+        key = key_map.get(value, 'background_default')
+        rel_path = str(self.assets.get(key) or self.assets.get('background_default') or '')
+        return self.pixmap(rel_path) if rel_path else QPixmap()
+
     def compose_avatar(self, emotion: str = 'neutral') -> QPixmap:
         normalized = normalize_emotion(emotion)
         if normalized in self._avatar_cache:
