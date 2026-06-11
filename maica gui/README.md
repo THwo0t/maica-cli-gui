@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.7
+# MAICA GUI v0.9.8
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -66,6 +66,7 @@ assets.
 - Data Manager dialog for profile, nicknames, affection, memories, facts, and safe debug snapshots.
 - Settings dialog for common non-secret runtime options.
 - Diagnostics export button for safe troubleshooting reports.
+- Toggleable Debug panel with compact MFocus/Response Planner summaries.
 - Runtime context strip showing date/time, affection, relationship stage, and today's special events.
 - Auto/day/night/rain background selection from the runtime asset manifest.
 - STT MVP through Windows Speech Recognition with a `Listen` button.
@@ -235,6 +236,11 @@ Python, Git, package availability, runtime paths, and a masked config summary.
 It does not print API keys, database rows, memories, or logs.
 
 The GUI `Diagnostics` button exports the same safe report to a JSON file.
+
+The GUI `Debug` button toggles a compact per-reply summary: source, emotion,
+response time, planner category/intent/mode, style category, and example-bank
+summary scores. It intentionally avoids dumping full prompts or private memory
+text.
 
 The smoke suite also runs a no-API fake-client `MaicaEngine.chat()` call against
 a temporary database. This catches core prompt/parse/store regressions without

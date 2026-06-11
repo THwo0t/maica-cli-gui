@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.9.7.
+"""MAICA GUI v0.9.8.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -48,7 +48,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.9.7'
+APP_VERSION = '0.9.8'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -604,6 +604,7 @@ class MainWindow(QMainWindow):
         self.data_button = QPushButton('Data')
         self.settings_button = QPushButton('Settings')
         self.diagnostics_button = QPushButton('Diagnostics')
+        self.debug_button = QPushButton('Debug')
         self.clear_button = QPushButton('Clear')
         self.send_button.clicked.connect(self.send_chat)
         self.spire_button.clicked.connect(self.send_spire)
@@ -613,6 +614,7 @@ class MainWindow(QMainWindow):
         self.data_button.clicked.connect(self.open_data_manager)
         self.settings_button.clicked.connect(self.open_settings)
         self.diagnostics_button.clicked.connect(self.export_diagnostics)
+        self.debug_button.clicked.connect(self.toggle_debug_panel)
         self.clear_button.clicked.connect(self.chat_view.clear)
         button_row.addWidget(self.send_button)
         button_row.addWidget(self.spire_button)
@@ -622,8 +624,16 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.data_button)
         button_row.addWidget(self.settings_button)
         button_row.addWidget(self.diagnostics_button)
+        button_row.addWidget(self.debug_button)
         button_row.addWidget(self.clear_button)
         right_layout.addLayout(button_row)
+
+        self.debug_panel = QPlainTextEdit()
+        self.debug_panel.setObjectName('debugPanel')
+        self.debug_panel.setReadOnly(True)
+        self.debug_panel.setMaximumHeight(150)
+        self.debug_panel.setVisible(False)
+        right_layout.addWidget(self.debug_panel)
 
         main_layout.addWidget(right_panel, 4)
         self.setStyleSheet(STYLE_SHEET)
@@ -789,6 +799,32 @@ class MainWindow(QMainWindow):
     def request_data_snapshot(self) -> None:
         self.data_snapshot_requested.emit()
 
+    def toggle_debug_panel(self) -> None:
+        self.debug_panel.setVisible(not self.debug_panel.isVisible())
+
+    def update_debug_panel(self, result: dict[str, Any]) -> None:
+        debug = result.get('debug') if isinstance(result.get('debug'), dict) else {}
+        plan = debug.get('mfocus_plan') if isinstance(debug.get('mfocus_plan'), dict) else {}
+        response_plan = plan.get('response_plan') if isinstance(plan.get('response_plan'), dict) else {}
+        style = plan.get('style') if isinstance(plan.get('style'), dict) else {}
+        example_bank = response_plan.get('example_bank') if isinstance(response_plan.get('example_bank'), dict) else {}
+        summaries = response_plan.get('example_summaries') if isinstance(response_plan.get('example_summaries'), list) else []
+        lines = [
+            f"source: {result.get('source', 'chat')} | ok: {result.get('ok')}",
+            f"emotion: {result.get('emotion', '')} | response_time: {result.get('response_time', '')}s",
+            f"category: {response_plan.get('category', '')} | intent: {response_plan.get('intent', '')}",
+            f"mode: {response_plan.get('mode', '')} | length: {response_plan.get('length', '')}",
+            f"style: {style.get('category', '')} | max_sentences: {style.get('max_sentences', '')}",
+            f"examples: {len(summaries)} | retrieval: {example_bank.get('retrieval_mode', '')}",
+        ]
+        for index, item in enumerate(summaries[:3], start=1):
+            if isinstance(item, dict):
+                lines.append(
+                    f"example {index}: {item.get('source', '')} | {item.get('intent', '')} | "
+                    f"score={item.get('score', '')} | vector={item.get('vector_similarity', '')}"
+                )
+        self.debug_panel.setPlainText('\n'.join(lines))
+
     def export_diagnostics(self) -> None:
         default_name = f"maica_diagnostics_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         target, _selected = QFileDialog.getSaveFileName(
@@ -865,6 +901,7 @@ class MainWindow(QMainWindow):
         emotion = str(visual_state.get('raw_emotion') or 'neutral')
         self.set_emotion(str(visual_state.get('emotion') or emotion))
         self.add_monika_message(reply_text, emotion, result.get('response_time', ''))
+        self.update_debug_panel(result)
         if self.tts_enabled and reply_text:
             self.add_system_message('TTS is synthesizing/playing...')
             self.tts.speak(reply_text)
@@ -922,6 +959,15 @@ QTextEdit#inputBox {
     border-radius: 12px;
     padding: 10px;
     font-size: 15px;
+}
+QPlainTextEdit#debugPanel {
+    background: rgba(22, 26, 31, 210);
+    color: #d8e8db;
+    border: 1px solid rgba(255, 255, 255, 54);
+    border-radius: 12px;
+    padding: 8px;
+    font-family: Consolas, "Courier New", monospace;
+    font-size: 12px;
 }
 QPushButton {
     background: #8d4d5a;

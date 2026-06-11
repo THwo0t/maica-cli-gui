@@ -20,6 +20,7 @@ yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
 - GUI Data Manager for profile, memories, facts, and safe debug snapshots.
 - GUI Settings for common non-secret options.
 - GUI Diagnostics export for safe troubleshooting reports.
+- GUI Debug panel for compact per-reply MFocus/Response Planner summaries.
 - Optional out-of-process embedding service for GUI vector/RAG retrieval.
 - CLI debugger for advanced maintenance.
 
