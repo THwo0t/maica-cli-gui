@@ -31,6 +31,7 @@ def compile_python() -> None:
         GUI_DIR / 'assets.py',
         GUI_DIR / 'engine_worker.py',
         GUI_DIR / 'gui_app.py',
+        GUI_DIR / 'diagnostics.py',
         GUI_DIR / 'stt.py',
         GUI_DIR / 'tts.py',
         CLI_DIR / 'config_defaults.py',
@@ -46,6 +47,28 @@ def validate_json() -> None:
     for path in (CLI_DIR / 'config.example.json', ROOT_DIR / 'maica cli factory' / 'config.example.json'):
         with path.open('r', encoding='utf-8-sig') as handle:
             json.load(handle)
+
+
+def test_launchers_exist() -> None:
+    for name in ('run_gui.ps1', 'run_cli.ps1', 'run_smoke_tests.ps1'):
+        check((ROOT_DIR / name).exists(), f'{name} is missing')
+
+
+def test_diagnostics() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(GUI_DIR / 'diagnostics.py')],
+        cwd=str(ROOT_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=20,
+    )
+    check(completed.returncode == 0, completed.stderr or completed.stdout)
+    report = json.loads(completed.stdout)
+    check(report['app'] == 'MAICA CLI GUI', 'diagnostics app name mismatch')
+    output = completed.stdout.lower()
+    check('api_key' in output, 'diagnostics should report secret field presence')
+    check('sk-' not in output, 'diagnostics leaked a likely API key')
 
 
 def test_text_helpers() -> None:
@@ -92,6 +115,10 @@ def main() -> int:
     print('compile_python ok')
     validate_json()
     print('validate_json ok')
+    test_launchers_exist()
+    print('launchers_exist ok')
+    test_diagnostics()
+    print('diagnostics ok')
     test_text_helpers()
     print('text_helpers ok')
     test_gui_offscreen()

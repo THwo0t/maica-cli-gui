@@ -4,6 +4,9 @@
 
 !.gitignore
 !README.md
+!run_gui.ps1
+!run_cli.ps1
+!run_smoke_tests.ps1
 
 # Main source
 !maica cli/

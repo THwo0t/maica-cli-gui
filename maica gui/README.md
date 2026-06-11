@@ -1,4 +1,4 @@
-# MAICA GUI v0.8.8
+# MAICA GUI v0.9.0
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -10,13 +10,19 @@ directly, while `maica_cli.py` remains available as a debugger console.
 From the repository root:
 
 ```powershell
-python "maica gui\gui_app.py"
+.\run_gui.ps1
 ```
 
 If `python` is not your Python 3.13 environment:
 
 ```powershell
 py -3.13 "maica gui\gui_app.py"
+```
+
+For the CLI debugger:
+
+```powershell
+.\run_cli.ps1
 ```
 
 ## Assets
@@ -90,7 +96,7 @@ The GUI supports provider-style TTS adapters.
   "tts_bailian_rate": 1.0,
   "tts_bailian_pitch": 1.0,
   "tts_bailian_timeout": 30,
-  "tts_bailian_instruction": "语气自然温柔，像恋人日常聊天，带一点俏皮。"
+  "tts_bailian_instruction": "Speak naturally and warmly, like a close daily conversation with a little playful softness."
 }
 ```
 
@@ -182,10 +188,22 @@ process. It depends on a working microphone, Windows speech recognition support,
 and the selected recognition language being installed. If recognition is not
 available, the GUI reports the error and text chat continues normally.
 
+## Diagnostics And Tests
+
+Run:
+
+```powershell
+.\run_smoke_tests.ps1
+python "maica gui\diagnostics.py"
+```
+
+`diagnostics.py` prints a safe JSON report for local troubleshooting. It checks
+Python, Git, package availability, runtime paths, and a masked config summary.
+It does not print API keys, database rows, memories, or logs.
+
 ## Not Yet Included
 
 - Native Live2D model loading.
-- STT.
 - Full MAS outfit/accessory parser.
 - Event decoration switching.
 - Packaged `.exe`.

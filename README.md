@@ -24,7 +24,7 @@ yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
 ## Run
 
 ```powershell
-python "maica gui\gui_app.py"
+.\run_gui.ps1
 ```
 
 If needed:
@@ -57,11 +57,25 @@ as the public-safe template.
 Run the lightweight local test suite:
 
 ```powershell
-python "maica gui\smoke_tests.py"
+.\run_smoke_tests.ps1
 ```
 
 The smoke test checks Python compilation, public JSON config validity, TTS text
-cleaning, STT disabled-provider behavior, and GUI offscreen startup.
+cleaning, STT disabled-provider behavior, diagnostics, and GUI offscreen
+startup.
+
+## Diagnostics
+
+Create a local troubleshooting report without exposing API keys, memories, logs,
+or database rows:
+
+```powershell
+python "maica gui\diagnostics.py"
+```
+
+The report includes Python, Git, module availability, key path checks, and a
+safe configuration summary. Secret-like fields are reported only as present or
+empty.
 
 ## Releases
 
