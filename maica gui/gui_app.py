@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.9.6.
+"""MAICA GUI v0.9.7.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -48,12 +48,13 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.9.6'
+APP_VERSION = '0.9.7'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
 
 from assets import AssetManager, normalize_emotion  # noqa: E402
+from diagnostics import collect_report  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
 from stt import create_stt  # noqa: E402
 from tts import create_tts  # noqa: E402
@@ -602,6 +603,7 @@ class MainWindow(QMainWindow):
         self.listen_button = QPushButton('Listen')
         self.data_button = QPushButton('Data')
         self.settings_button = QPushButton('Settings')
+        self.diagnostics_button = QPushButton('Diagnostics')
         self.clear_button = QPushButton('Clear')
         self.send_button.clicked.connect(self.send_chat)
         self.spire_button.clicked.connect(self.send_spire)
@@ -610,6 +612,7 @@ class MainWindow(QMainWindow):
         self.listen_button.clicked.connect(self.listen_once)
         self.data_button.clicked.connect(self.open_data_manager)
         self.settings_button.clicked.connect(self.open_settings)
+        self.diagnostics_button.clicked.connect(self.export_diagnostics)
         self.clear_button.clicked.connect(self.chat_view.clear)
         button_row.addWidget(self.send_button)
         button_row.addWidget(self.spire_button)
@@ -618,6 +621,7 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.listen_button)
         button_row.addWidget(self.data_button)
         button_row.addWidget(self.settings_button)
+        button_row.addWidget(self.diagnostics_button)
         button_row.addWidget(self.clear_button)
         right_layout.addLayout(button_row)
 
@@ -784,6 +788,26 @@ class MainWindow(QMainWindow):
 
     def request_data_snapshot(self) -> None:
         self.data_snapshot_requested.emit()
+
+    def export_diagnostics(self) -> None:
+        default_name = f"maica_diagnostics_{dt.datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+        target, _selected = QFileDialog.getSaveFileName(
+            self,
+            'Export diagnostics',
+            str(Path.home() / default_name),
+            'JSON files (*.json);;All files (*.*)',
+        )
+        if not target:
+            return
+        try:
+            import json
+
+            report = collect_report()
+            Path(target).write_text(json.dumps(report, ensure_ascii=True, indent=2), encoding='utf-8')
+            self.add_system_message(f'Diagnostics exported: {target}')
+        except Exception as exc:
+            self.add_system_message(f'Diagnostics export failed: {exc}')
+            QMessageBox.warning(self, 'Diagnostics export failed', str(exc))
 
     def _handle_data_ready(self, payload: dict[str, Any]) -> None:
         if not payload.get('ok', True):

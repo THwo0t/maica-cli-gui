@@ -19,6 +19,7 @@ yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
 - Windows Speech Recognition STT MVP.
 - GUI Data Manager for profile, memories, facts, and safe debug snapshots.
 - GUI Settings for common non-secret options.
+- GUI Diagnostics export for safe troubleshooting reports.
 - Optional out-of-process embedding service for GUI vector/RAG retrieval.
 - CLI debugger for advanced maintenance.
 

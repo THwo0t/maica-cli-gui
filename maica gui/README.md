@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.6
+# MAICA GUI v0.9.7
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -65,6 +65,7 @@ assets.
 - Persistent background engine worker, so GUI no longer rebuilds the engine every turn.
 - Data Manager dialog for profile, nicknames, affection, memories, facts, and safe debug snapshots.
 - Settings dialog for common non-secret runtime options.
+- Diagnostics export button for safe troubleshooting reports.
 - Runtime context strip showing date/time, affection, relationship stage, and today's special events.
 - Auto/day/night/rain background selection from the runtime asset manifest.
 - STT MVP through Windows Speech Recognition with a `Listen` button.
@@ -232,6 +233,8 @@ python "maica gui\diagnostics.py"
 `diagnostics.py` prints a safe JSON report for local troubleshooting. It checks
 Python, Git, package availability, runtime paths, and a masked config summary.
 It does not print API keys, database rows, memories, or logs.
+
+The GUI `Diagnostics` button exports the same safe report to a JSON file.
 
 The smoke suite also runs a no-API fake-client `MaicaEngine.chat()` call against
 a temporary database. This catches core prompt/parse/store regressions without

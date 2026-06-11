@@ -101,11 +101,15 @@ def test_text_helpers() -> None:
     sys.path.insert(0, str(GUI_DIR))
     from stt import create_stt
     from tts import clean_tts_text
+    from diagnostics import collect_report
 
     assert clean_tts_text('(smiles) I missed you. [debug] hidden') == 'I missed you.'
     assert clean_tts_text('（轻轻握住你的手）I am here.') == 'I am here.'
     result = create_stt({'stt_provider': 'off'}).listen()
     check(not result['ok'], 'Null STT should not recognize speech')
+    report = collect_report()
+    output = json.dumps(report, ensure_ascii=True)
+    check('sk-' not in output, 'diagnostics report leaked a likely API key')
 
 
 def test_engine_fake_chat() -> None:
