@@ -1,4 +1,4 @@
-# MAICA GUI v0.8.7
+# MAICA GUI v0.8.8
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -52,6 +52,7 @@ assets.
 - Settings dialog for common non-secret runtime options.
 - Runtime context strip showing date/time, affection, relationship stage, and today's special events.
 - Automatic day/night background selection from the runtime asset manifest.
+- STT MVP through Windows Speech Recognition with a `Listen` button.
 
 ## TTS
 
@@ -160,6 +161,26 @@ and after data-manager operations. It currently shows:
 The background switches between the default spaceroom and night spaceroom based
 on local time. Weather and holiday overlays are reserved for later resource
 expansion.
+
+## STT
+
+The `Listen` button uses the configured STT provider and writes recognized text
+into the input box.
+
+Current provider:
+
+```json
+{
+  "stt_provider": "windows_speech",
+  "stt_language": "en",
+  "stt_timeout": 8
+}
+```
+
+This MVP uses Windows `System.Speech.Recognition` through a child PowerShell
+process. It depends on a working microphone, Windows speech recognition support,
+and the selected recognition language being installed. If recognition is not
+available, the GUI reports the error and text chat continues normally.
 
 ## Not Yet Included
 

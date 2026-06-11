@@ -255,6 +255,9 @@ class GuiEngineWorker(QObject):
             'tts_bailian_voice',
             'tts_bailian_format',
             'tts_bailian_instruction',
+            'stt_provider',
+            'stt_language',
+            'stt_timeout',
             'embedding_enabled',
             'memory_embedding_enabled',
             'gui_disable_thread_embeddings',
@@ -290,6 +293,9 @@ class GuiEngineWorker(QObject):
             'tts_bailian_voice': str,
             'tts_bailian_format': str,
             'tts_bailian_instruction': str,
+            'stt_provider': str,
+            'stt_language': str,
+            'stt_timeout': int,
             'gui_disable_thread_embeddings': bool,
         }
         applied: list[str] = []

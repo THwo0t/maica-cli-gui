@@ -102,5 +102,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "tts_bailian_pitch": 1.0,
     "tts_bailian_timeout": 30,
     "tts_bailian_instruction": "语气自然温柔，像恋人日常聊天，带一点俏皮。",
+    "stt_provider": "windows_speech",
+    "stt_language": "en",
+    "stt_timeout": 8,
     "special_events": DEFAULT_SPECIAL_EVENTS,
 }

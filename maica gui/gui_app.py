@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.8.7.
+"""MAICA GUI v0.8.8.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 import datetime as dt
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -46,13 +47,14 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.8.7'
+APP_VERSION = '0.8.8'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
 
 from assets import AssetManager, normalize_emotion  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
+from stt import create_stt  # noqa: E402
 from tts import create_tts  # noqa: E402
 
 
@@ -60,6 +62,7 @@ PROFILE_FIELDS = ('player_name', 'birthday', 'location', 'nicknames', 'affection
 LANGUAGE_OPTIONS = ('en', 'zh')
 MODE_OPTIONS = ('hybrid', 'rule', 'off')
 TTS_PROVIDERS = ('bailian_cosyvoice', 'windows_sapi', 'off')
+STT_PROVIDERS = ('windows_speech', 'off')
 
 
 def html_escape(text: str) -> str:
@@ -320,6 +323,12 @@ class SettingsDialog(QDialog):
         self.tts_format = QComboBox()
         self.tts_format.addItems(('mp3', 'wav'))
         self.tts_instruction = QLineEdit()
+        self.stt_provider = QComboBox()
+        self.stt_provider.addItems(STT_PROVIDERS)
+        self.stt_language = QComboBox()
+        self.stt_language.addItems(('en', 'zh'))
+        self.stt_timeout = QSpinBox()
+        self.stt_timeout.setRange(2, 30)
 
         form.addRow('API base', self.api_base)
         form.addRow('Model', self.model)
@@ -337,6 +346,9 @@ class SettingsDialog(QDialog):
         form.addRow('Bailian voice', self.tts_voice)
         form.addRow('Bailian format', self.tts_format)
         form.addRow('Bailian instruction', self.tts_instruction)
+        form.addRow('STT provider', self.stt_provider)
+        form.addRow('STT language', self.stt_language)
+        form.addRow('STT timeout', self.stt_timeout)
         layout.addLayout(form)
 
         note = QLabel('Secrets such as API keys are intentionally not shown here. Edit local config.json if needed.')
@@ -370,6 +382,9 @@ class SettingsDialog(QDialog):
         self.tts_voice.setText(str(config.get('tts_bailian_voice') or ''))
         self._set_combo(self.tts_format, str(config.get('tts_bailian_format') or 'mp3'))
         self.tts_instruction.setText(str(config.get('tts_bailian_instruction') or ''))
+        self._set_combo(self.stt_provider, str(config.get('stt_provider') or 'windows_speech'))
+        self._set_combo(self.stt_language, str(config.get('stt_language') or config.get('language') or 'en'))
+        self.stt_timeout.setValue(int(config.get('stt_timeout') or 8))
 
     def _set_combo(self, combo: QComboBox, value: str) -> None:
         index = combo.findText(value)
@@ -396,6 +411,9 @@ class SettingsDialog(QDialog):
             'tts_bailian_voice': self.tts_voice.text().strip(),
             'tts_bailian_format': self.tts_format.currentText(),
             'tts_bailian_instruction': self.tts_instruction.text().strip(),
+            'stt_provider': self.stt_provider.currentText(),
+            'stt_language': self.stt_language.currentText(),
+            'stt_timeout': self.stt_timeout.value(),
         }
         self.owner.config_save_requested.emit(updates)
 
@@ -438,6 +456,7 @@ class MainWindow(QMainWindow):
     fact_delete_requested = Signal(int)
     debug_export_requested = Signal(str)
     config_save_requested = Signal(dict)
+    stt_finished = Signal(dict)
 
     def __init__(self) -> None:
         super().__init__()
@@ -449,8 +468,10 @@ class MainWindow(QMainWindow):
         self.worker = GuiEngineWorker()
         self.worker.moveToThread(self.thread)
         self.tts = create_tts({})
+        self.stt = create_stt({})
         self.tts_enabled = False
         self.last_tts_error = ''
+        self.stt_busy = False
         self.data_dialog: DataManagerDialog | None = None
         self.settings_dialog: SettingsDialog | None = None
         self.current_config: dict[str, Any] = {}
@@ -482,6 +503,7 @@ class MainWindow(QMainWindow):
         self.fact_delete_requested.connect(self.worker.delete_fact)
         self.debug_export_requested.connect(self.worker.export_debug)
         self.config_save_requested.connect(self.worker.save_config)
+        self.stt_finished.connect(self._handle_stt_finished)
 
     def _build_ui(self) -> None:
         self.root_widget = BackgroundWidget(self.assets.background_for_hour(dt.datetime.now().hour))
@@ -540,6 +562,7 @@ class MainWindow(QMainWindow):
         self.spire_button = QPushButton('/spire')
         self.tts_button = QPushButton('TTS: off')
         self.stop_tts_button = QPushButton('停止语音')
+        self.listen_button = QPushButton('Listen')
         self.data_button = QPushButton('Data')
         self.settings_button = QPushButton('Settings')
         self.clear_button = QPushButton('清屏')
@@ -547,6 +570,7 @@ class MainWindow(QMainWindow):
         self.spire_button.clicked.connect(self.send_spire)
         self.tts_button.clicked.connect(self.toggle_tts)
         self.stop_tts_button.clicked.connect(self.stop_tts)
+        self.listen_button.clicked.connect(self.listen_once)
         self.data_button.clicked.connect(self.open_data_manager)
         self.settings_button.clicked.connect(self.open_settings)
         self.clear_button.clicked.connect(self.chat_view.clear)
@@ -554,6 +578,7 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.spire_button)
         button_row.addWidget(self.tts_button)
         button_row.addWidget(self.stop_tts_button)
+        button_row.addWidget(self.listen_button)
         button_row.addWidget(self.data_button)
         button_row.addWidget(self.settings_button)
         button_row.addWidget(self.clear_button)
@@ -655,6 +680,7 @@ class MainWindow(QMainWindow):
     def _handle_config_ready(self, config: dict[str, Any]) -> None:
         self.current_config = dict(config)
         self.tts = create_tts(config)
+        self.stt = create_stt(config)
         self.tts_enabled = bool(config.get('tts_enabled', False))
         self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
         provider = str(config.get('tts_provider') or 'windows_sapi')
@@ -671,6 +697,29 @@ class MainWindow(QMainWindow):
 
     def stop_tts(self) -> None:
         self.tts.stop()
+
+    def listen_once(self) -> None:
+        if self.stt_busy:
+            return
+        self.stt_busy = True
+        self.listen_button.setEnabled(False)
+        self.add_system_message('STT listening...')
+
+        def run() -> None:
+            result = self.stt.listen()
+            self.stt_finished.emit(result)
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _handle_stt_finished(self, result: dict[str, Any]) -> None:
+        self.stt_busy = False
+        self.listen_button.setEnabled(True)
+        if result.get('ok'):
+            text = str(result.get('text') or '').strip()
+            self.input_box.setPlainText(text)
+            self.add_system_message(f'STT recognized: {text}')
+        else:
+            self.add_system_message(f'STT failed: {result.get("error", "unknown error")}')
 
     def open_data_manager(self) -> None:
         if self.data_dialog is None:
@@ -704,6 +753,7 @@ class MainWindow(QMainWindow):
             self.current_config.update(config)
         if payload.get('action') == 'save_config':
             self.tts = create_tts(self.current_config)
+            self.stt = create_stt(self.current_config)
             self.tts_enabled = bool(self.current_config.get('tts_enabled', False))
             self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
             self.add_system_message('Settings saved. Restart GUI if you changed core model/API options.')
