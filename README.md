@@ -19,6 +19,7 @@ yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
 - Windows Speech Recognition STT MVP.
 - GUI Data Manager for profile, memories, facts, and safe debug snapshots.
 - GUI Settings for common non-secret options.
+- Optional out-of-process embedding service for GUI vector/RAG retrieval.
 - CLI debugger for advanced maintenance.
 
 ## Run
@@ -76,6 +77,26 @@ python "maica gui\diagnostics.py"
 The report includes Python, Git, module availability, key path checks, and a
 safe configuration summary. Secret-like fields are reported only as present or
 empty.
+
+## GUI Vector Retrieval
+
+The GUI can keep torch/sentence-transformers out of the Qt worker by using the
+optional localhost embedding service:
+
+```json
+{
+  "embedding_enabled": true,
+  "embedding_service_enabled": true,
+  "embedding_service_autostart": true,
+  "embedding_service_port": 8766
+}
+```
+
+When enabled, the GUI autostarts `maica cli/embedding_service.py` and Example
+Bank retrieval calls the service instead of loading embeddings inside the GUI
+process. If the service is unavailable or still cold-starting, chat falls back
+to non-vector retrieval. Increase `embedding_service_timeout` if you prefer the
+first vector request to wait for the local model to finish loading.
 
 ## Releases
 

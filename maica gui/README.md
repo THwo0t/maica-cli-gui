@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.0
+# MAICA GUI v0.9.1
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -59,6 +59,7 @@ assets.
 - Runtime context strip showing date/time, affection, relationship stage, and today's special events.
 - Automatic day/night background selection from the runtime asset manifest.
 - STT MVP through Windows Speech Recognition with a `Listen` button.
+- Optional out-of-process embedding service for GUI vector/RAG retrieval.
 
 ## TTS
 
@@ -110,9 +111,8 @@ cleaned.
 
 ## Vector Retrieval In GUI
 
-The CLI debugger can still use embedding/FAISS retrieval normally.
-
-The GUI disables thread-local embedding retrieval by default:
+The CLI debugger can still use embedding/FAISS retrieval normally. The GUI
+disables thread-local embedding retrieval by default:
 
 ```json
 {
@@ -121,9 +121,29 @@ The GUI disables thread-local embedding retrieval by default:
 ```
 
 This avoids a PySide6 worker-thread crash observed when sentence-transformers
-loads or encodes embeddings inside the GUI worker. The long-term fix is to move
-embedding retrieval into a separate subprocess/service, then let the GUI call
-that service instead of loading the embedding model inside a Qt worker thread.
+loads or encodes embeddings inside the GUI worker.
+
+v0.9.1 adds an optional localhost embedding service:
+
+```json
+{
+  "embedding_enabled": true,
+  "memory_embedding_enabled": true,
+  "embedding_service_enabled": true,
+  "embedding_service_autostart": true,
+  "embedding_service_host": "127.0.0.1",
+  "embedding_service_port": 8766,
+  "embedding_service_timeout": 8
+}
+```
+
+When service mode is enabled, Example Bank and memory vector retrieval call
+`maica cli/embedding_service.py` over HTTP. The service owns FAISS and
+sentence-transformers work; the GUI process only sends localhost requests. If
+the service is unavailable, Example Bank falls back to lexical retrieval and
+chat stays usable. The first real vector request may be slow while the local
+embedding model loads; increase `embedding_service_timeout` if you prefer to
+wait instead of falling back on that first turn.
 
 ## Data Manager
 
@@ -149,6 +169,7 @@ Use the `Settings` button to edit common non-secret options:
 - Temperature, top-p, and max tokens.
 - MFocus/MTrigger mode.
 - TTS provider and Bailian voice/model/format/instruction.
+- Example Bank vectors, memory vectors, and external embedding service.
 - GUI thread embedding safety toggle.
 
 Secrets such as API keys are intentionally not displayed in the GUI settings

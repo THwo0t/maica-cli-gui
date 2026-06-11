@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import sys
+import time
 import traceback
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -33,12 +37,14 @@ class GuiEngineWorker(QObject):
     def __init__(self) -> None:
         super().__init__()
         self.engine: MaicaEngine | None = None
+        self.embedding_service_process: subprocess.Popen[Any] | None = None
 
     @Slot()
     def initialize(self) -> None:
         try:
             self.engine = MaicaEngine()
             self._apply_gui_safety_overrides()
+            self._sync_embedding_service()
             self.config_ready.emit(dict(self.engine.config))
             self.ready.emit({'ok': True, 'error': ''})
             self._prewarm_embeddings_if_needed()
@@ -51,6 +57,9 @@ class GuiEngineWorker(QObject):
         config = self.engine.config
         if not config.get('gui_disable_thread_embeddings', True):
             return
+        if config.get('embedding_service_enabled', False):
+            self.status.emit('Embedding service mode is enabled; GUI will not load vectors in-process.')
+            return
         disabled = []
         for key in ('embedding_enabled', 'memory_embedding_enabled'):
             if config.get(key):
@@ -59,8 +68,87 @@ class GuiEngineWorker(QObject):
         config['gui_prewarm_embeddings'] = False
         if disabled:
             self.status.emit(
-                'GUI 已禁用线程内向量检索以避免 Qt worker 闪退；CLI Debugger 仍可使用向量检索。'
+                'GUI thread vector retrieval is disabled for stability. CLI can still use local vectors.'
             )
+
+    def _embedding_service_url(self) -> str:
+        config = self.engine.config if self.engine is not None else {}
+        host = str(config.get('embedding_service_host') or '127.0.0.1').strip() or '127.0.0.1'
+        port = int(config.get('embedding_service_port') or 8766)
+        return f'http://{host}:{port}'
+
+    def _embedding_service_health(self, timeout: float = 0.6) -> bool:
+        try:
+            request = urllib.request.Request(self._embedding_service_url() + '/health', method='GET')
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                data = json.loads(response.read().decode('utf-8', errors='replace'))
+            return bool(data.get('ok'))
+        except Exception:
+            return False
+
+    def _sync_embedding_service(self) -> None:
+        if self.engine is None:
+            return
+        config = self.engine.config
+        wants_service = bool(config.get('embedding_service_enabled', False))
+        wants_vectors = bool(config.get('embedding_enabled') or config.get('memory_embedding_enabled'))
+        autostart = bool(config.get('embedding_service_autostart', True))
+        if not wants_service or not wants_vectors:
+            self._stop_embedding_service()
+            return
+        if self._embedding_service_health():
+            self.status.emit(f'Embedding service ready at {self._embedding_service_url()}')
+            return
+        if not autostart:
+            self.status.emit('Embedding service is enabled but autostart is off.')
+            return
+        script = CLI_DIR / 'embedding_service.py'
+        args = [
+            sys.executable,
+            str(script),
+            '--host',
+            str(config.get('embedding_service_host') or '127.0.0.1'),
+            '--port',
+            str(int(config.get('embedding_service_port') or 8766)),
+            '--config',
+            str(self.engine.config_path),
+            '--db',
+            str(self.engine.db_path),
+        ]
+        flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        try:
+            self.embedding_service_process = subprocess.Popen(
+                args,
+                cwd=str(CLI_DIR),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=flags,
+            )
+        except Exception as exc:
+            self.status.emit(f'Embedding service failed to start: {exc}')
+            return
+        deadline = time.time() + 3.0
+        while time.time() < deadline:
+            if self._embedding_service_health(timeout=0.4):
+                self.status.emit(f'Embedding service started at {self._embedding_service_url()}')
+                return
+            time.sleep(0.2)
+        self.status.emit('Embedding service was started, but health check is not ready yet.')
+
+    def _stop_embedding_service(self) -> None:
+        process = self.embedding_service_process
+        self.embedding_service_process = None
+        if process is None or process.poll() is not None:
+            return
+        try:
+            process.terminate()
+            process.wait(timeout=3)
+        except Exception:
+            try:
+                process.kill()
+            except Exception:
+                pass
 
     def _prewarm_embeddings_if_needed(self) -> None:
         if self.engine is None:
@@ -91,6 +179,7 @@ class GuiEngineWorker(QObject):
 
     @Slot()
     def shutdown(self) -> None:
+        self._stop_embedding_service()
         if self.engine is not None:
             self.engine.close()
             self.engine = None
@@ -154,6 +243,7 @@ class GuiEngineWorker(QObject):
         if self.engine is None:
             self.engine = MaicaEngine()
             self._apply_gui_safety_overrides()
+            self._sync_embedding_service()
         return self.engine
 
     def _run_data_action(self, action: str, **kwargs: Any) -> None:
@@ -210,6 +300,8 @@ class GuiEngineWorker(QObject):
                 applied = self._apply_config_updates(engine, updates)
                 if applied:
                     save_json(engine.config_path, engine.config)
+                    self._apply_gui_safety_overrides()
+                    self._sync_embedding_service()
                     notice = f'Saved config: {", ".join(applied)}'
 
             payload = self._data_snapshot(engine)
@@ -260,6 +352,11 @@ class GuiEngineWorker(QObject):
             'stt_timeout',
             'embedding_enabled',
             'memory_embedding_enabled',
+            'embedding_service_enabled',
+            'embedding_service_autostart',
+            'embedding_service_host',
+            'embedding_service_port',
+            'embedding_service_timeout',
             'gui_disable_thread_embeddings',
             'show_debug',
         }
@@ -296,6 +393,13 @@ class GuiEngineWorker(QObject):
             'stt_provider': str,
             'stt_language': str,
             'stt_timeout': int,
+            'embedding_enabled': bool,
+            'memory_embedding_enabled': bool,
+            'embedding_service_enabled': bool,
+            'embedding_service_autostart': bool,
+            'embedding_service_host': str,
+            'embedding_service_port': int,
+            'embedding_service_timeout': int,
             'gui_disable_thread_embeddings': bool,
         }
         applied: list[str] = []

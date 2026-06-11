@@ -35,6 +35,11 @@ SAFE_CONFIG_KEYS = (
     'show_debug',
     'embedding_enabled',
     'memory_embedding_enabled',
+    'embedding_service_enabled',
+    'embedding_service_autostart',
+    'embedding_service_host',
+    'embedding_service_port',
+    'embedding_service_timeout',
     'gui_disable_thread_embeddings',
     'tts_enabled',
     'tts_provider',
@@ -142,7 +147,7 @@ def gh_auth_snapshot() -> dict[str, Any]:
 def collect_report() -> dict[str, Any]:
     return {
         'app': 'MAICA CLI GUI',
-        'diagnostics_version': '0.9.0',
+        'diagnostics_version': '0.9.1',
         'python': {
             'executable': sys.executable,
             'version': sys.version,

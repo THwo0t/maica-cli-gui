@@ -8,6 +8,7 @@ import json
 import re
 from typing import Any
 
+from embedding_service_client import search_service_memories
 from embedding_index import search_memory_vectors
 from monika_lens import build_monika_lens_context
 from persona import base_system_prompt, relationship_stage
@@ -120,22 +121,34 @@ def retrieve_memories_for_mfocus(
     fallback_enabled = bool(config.get("memory_embedding_fallback_lexical", True))
     if config.get("memory_embedding_enabled", False):
         try:
-            vector_rows = search_memory_vectors(
-                query,
-                config,
-                limit=int(config.get("memory_embedding_inject_limit", limit)),
-                min_score=float(config.get("memory_embedding_min_score", 0.55)),
-            )
+            vector_limit = int(config.get("memory_embedding_inject_limit", limit))
+            vector_score = float(config.get("memory_embedding_min_score", 0.55))
+            if config.get("embedding_service_enabled", False):
+                vector_rows = search_service_memories(
+                    query,
+                    config,
+                    limit=vector_limit,
+                    min_score=vector_score,
+                )
+                vector_mode = "service_vector"
+            else:
+                vector_rows = search_memory_vectors(
+                    query,
+                    config,
+                    limit=vector_limit,
+                    min_score=vector_score,
+                )
+                vector_mode = "vector"
             if vector_rows:
                 return vector_rows, {
-                    "mode": "vector",
+                    "mode": vector_mode,
                     "count": len(vector_rows),
                     "fallback": False,
                     "scores": [row.get("_vector_score") for row in vector_rows],
                 }
             if not fallback_enabled:
                 return [], {
-                    "mode": "vector",
+                    "mode": vector_mode,
                     "count": 0,
                     "fallback": False,
                     "scores": [],

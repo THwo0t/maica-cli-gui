@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.9.0.
+"""MAICA GUI v0.9.1.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -47,7 +47,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.9.0'
+APP_VERSION = '0.9.1'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -313,7 +313,13 @@ class SettingsDialog(QDialog):
         self.mtrigger_mode = QComboBox()
         self.mtrigger_mode.addItems(MODE_OPTIONS)
         self.show_debug = QCheckBox('Show debug in CLI/engine logs')
+        self.embedding_enabled = QCheckBox('Enable Example Bank vector retrieval')
+        self.memory_embedding_enabled = QCheckBox('Enable memory vector retrieval')
+        self.embedding_service_enabled = QCheckBox('Use external embedding service')
+        self.embedding_service_autostart = QCheckBox('Auto-start embedding service in GUI')
         self.gui_disable_thread_embeddings = QCheckBox('Disable GUI thread embeddings')
+        self.embedding_service_port = QSpinBox()
+        self.embedding_service_port.setRange(1024, 65535)
 
         self.tts_enabled = QCheckBox('Enable TTS by default')
         self.tts_provider = QComboBox()
@@ -339,6 +345,11 @@ class SettingsDialog(QDialog):
         form.addRow('MFocus mode', self.mfocus_mode)
         form.addRow('MTrigger mode', self.mtrigger_mode)
         form.addRow('', self.show_debug)
+        form.addRow('', self.embedding_enabled)
+        form.addRow('', self.memory_embedding_enabled)
+        form.addRow('', self.embedding_service_enabled)
+        form.addRow('', self.embedding_service_autostart)
+        form.addRow('Embedding service port', self.embedding_service_port)
         form.addRow('', self.gui_disable_thread_embeddings)
         form.addRow('', self.tts_enabled)
         form.addRow('TTS provider', self.tts_provider)
@@ -375,6 +386,11 @@ class SettingsDialog(QDialog):
         self._set_combo(self.mfocus_mode, str(config.get('mfocus_mode') or 'hybrid'))
         self._set_combo(self.mtrigger_mode, str(config.get('mtrigger_mode') or 'hybrid'))
         self.show_debug.setChecked(bool(config.get('show_debug', True)))
+        self.embedding_enabled.setChecked(bool(config.get('embedding_enabled', False)))
+        self.memory_embedding_enabled.setChecked(bool(config.get('memory_embedding_enabled', False)))
+        self.embedding_service_enabled.setChecked(bool(config.get('embedding_service_enabled', False)))
+        self.embedding_service_autostart.setChecked(bool(config.get('embedding_service_autostart', True)))
+        self.embedding_service_port.setValue(int(config.get('embedding_service_port') or 8766))
         self.gui_disable_thread_embeddings.setChecked(bool(config.get('gui_disable_thread_embeddings', True)))
         self.tts_enabled.setChecked(bool(config.get('tts_enabled', False)))
         self._set_combo(self.tts_provider, str(config.get('tts_provider') or 'windows_sapi'))
@@ -404,6 +420,11 @@ class SettingsDialog(QDialog):
             'mfocus_mode': self.mfocus_mode.currentText(),
             'mtrigger_mode': self.mtrigger_mode.currentText(),
             'show_debug': self.show_debug.isChecked(),
+            'embedding_enabled': self.embedding_enabled.isChecked(),
+            'memory_embedding_enabled': self.memory_embedding_enabled.isChecked(),
+            'embedding_service_enabled': self.embedding_service_enabled.isChecked(),
+            'embedding_service_autostart': self.embedding_service_autostart.isChecked(),
+            'embedding_service_port': self.embedding_service_port.value(),
             'gui_disable_thread_embeddings': self.gui_disable_thread_embeddings.isChecked(),
             'tts_enabled': self.tts_enabled.isChecked(),
             'tts_provider': self.tts_provider.currentText(),

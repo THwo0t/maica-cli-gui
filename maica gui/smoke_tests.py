@@ -35,6 +35,8 @@ def compile_python() -> None:
         GUI_DIR / 'stt.py',
         GUI_DIR / 'tts.py',
         CLI_DIR / 'config_defaults.py',
+        CLI_DIR / 'embedding_service.py',
+        CLI_DIR / 'embedding_service_client.py',
         CLI_DIR / 'mfocus.py',
         CLI_DIR / 'response_planner.py',
         CLI_DIR / 'example_bank.py',
@@ -69,6 +71,19 @@ def test_diagnostics() -> None:
     output = completed.stdout.lower()
     check('api_key' in output, 'diagnostics should report secret field presence')
     check('sk-' not in output, 'diagnostics leaked a likely API key')
+
+
+def test_embedding_service_help() -> None:
+    completed = subprocess.run(
+        [sys.executable, str(CLI_DIR / 'embedding_service.py'), '--help'],
+        cwd=str(ROOT_DIR),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=20,
+    )
+    check(completed.returncode == 0, completed.stderr or completed.stdout)
+    check('embedding retrieval service' in completed.stdout, 'embedding service help text mismatch')
 
 
 def test_text_helpers() -> None:
@@ -119,6 +134,8 @@ def main() -> int:
     print('launchers_exist ok')
     test_diagnostics()
     print('diagnostics ok')
+    test_embedding_service_help()
+    print('embedding_service_help ok')
     test_text_helpers()
     print('text_helpers ok')
     test_gui_offscreen()

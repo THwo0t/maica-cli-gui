@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from embedding_service_client import search_service_examples
 from embedding_index import search_vector_examples
 
 
@@ -460,7 +461,25 @@ def select_examples(
     vector_error = ""
     vector_count = 0
     source_examples: list[dict[str, Any]] | None = None
-    if config.get("embedding_enabled", False):
+    if config.get("embedding_service_enabled", False):
+        try:
+            vector_limit = max(
+                candidate_limit,
+                safe_int(config.get("embedding_top_k", 30), 30),
+            )
+            retrieval_mode = "service"
+            source_examples = search_service_examples(
+                query_retrieval_text,
+                config,
+                limit=vector_limit,
+                min_score=-1.0 if model_filtering else safe_float(config.get("embedding_min_score", 0.55), 0.55),
+            )
+            vector_count = len(source_examples)
+        except Exception as exc:
+            retrieval_mode = "lexical"
+            vector_error = f"service: {exc}"
+            source_examples = None
+    elif config.get("embedding_enabled", False):
         try:
             vector_limit = max(
                 candidate_limit,
@@ -491,9 +510,9 @@ def select_examples(
         examined += 1
         score, debug = score_example(example, user_input, response_plan)
         vector_score = safe_float(example.get("_vector_score"), 0.0)
-        if retrieval_mode == "vector" and strict_relevance and not model_filtering and vector_score < min_vector_score:
+        if retrieval_mode in {"vector", "service"} and strict_relevance and not model_filtering and vector_score < min_vector_score:
             continue
-        if retrieval_mode == "vector":
+        if retrieval_mode in {"vector", "service"}:
             score = round(score + vector_score * 180, 3)
         if score < min_score and not (retrieval_mode == "vector" and model_filtering):
             continue
@@ -539,7 +558,7 @@ def select_examples(
                 )
             )
         ]
-    if retrieval_mode == "vector" and model_filtering:
+    if retrieval_mode in {"vector", "service"} and model_filtering:
         candidates = scored[:candidate_limit]
     elif raw_exact_intent:
         candidates = exact_intent[:candidate_limit]
