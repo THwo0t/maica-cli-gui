@@ -1,4 +1,4 @@
-# MAICA GUI v0.8.6
+# MAICA GUI v0.8.7
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -50,6 +50,8 @@ assets.
 - Persistent background engine worker, so GUI no longer rebuilds the engine every turn.
 - Data Manager dialog for profile, nicknames, affection, memories, facts, and safe debug snapshots.
 - Settings dialog for common non-secret runtime options.
+- Runtime context strip showing date/time, affection, relationship stage, and today's special events.
+- Automatic day/night background selection from the runtime asset manifest.
 
 ## TTS
 
@@ -144,6 +146,20 @@ Use the `Settings` button to edit common non-secret options:
 
 Secrets such as API keys are intentionally not displayed in the GUI settings
 dialog. Keep editing those only in the ignored local `maica cli/config.json`.
+
+## Runtime Context
+
+The GUI refreshes a small context strip after the backend engine becomes ready
+and after data-manager operations. It currently shows:
+
+- Local date and time.
+- Affection value.
+- Relationship stage.
+- Detected special events for today.
+
+The background switches between the default spaceroom and night spaceroom based
+on local time. Weather and holiday overlays are reserved for later resource
+expansion.
 
 ## Not Yet Included
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.8.6.
+"""MAICA GUI v0.8.7.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -9,6 +9,7 @@ The CLI remains a debugger and is not started in the background.
 from __future__ import annotations
 
 import sys
+import datetime as dt
 from pathlib import Path
 from typing import Any
 
@@ -45,7 +46,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.8.6'
+APP_VERSION = '0.8.7'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -404,6 +405,10 @@ class BackgroundWidget(QWidget):
         super().__init__(parent)
         self.background = background
 
+    def set_background(self, background: QPixmap) -> None:
+        self.background = background
+        self.update()
+
     def paintEvent(self, event: Any) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
@@ -479,7 +484,8 @@ class MainWindow(QMainWindow):
         self.config_save_requested.connect(self.worker.save_config)
 
     def _build_ui(self) -> None:
-        root = BackgroundWidget(self.assets.background())
+        self.root_widget = BackgroundWidget(self.assets.background_for_hour(dt.datetime.now().hour))
+        root = self.root_widget
         self.setCentralWidget(root)
 
         main_layout = QHBoxLayout(root)
@@ -501,6 +507,10 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel('emotion: smile')
         self.status_label.setObjectName('statusLabel')
         left_layout.addWidget(self.status_label)
+        self.context_label = QLabel('loading status...')
+        self.context_label.setObjectName('contextLabel')
+        self.context_label.setWordWrap(True)
+        left_layout.addWidget(self.context_label)
         main_layout.addWidget(left_panel, 5)
 
         right_panel = QFrame()
@@ -638,6 +648,7 @@ class MainWindow(QMainWindow):
     def _handle_ready(self, result: dict[str, Any]) -> None:
         if result.get('ok'):
             self.add_system_message('后台引擎已就绪。')
+            self.request_data_snapshot()
         else:
             self.add_system_message(f'后台引擎初始化失败：{result.get("error", "unknown error")}')
 
@@ -700,6 +711,26 @@ class MainWindow(QMainWindow):
                 self.settings_dialog.render(self.current_config)
         if self.data_dialog is not None:
             self.data_dialog.render(payload)
+        self.update_context_label(payload)
+
+    def update_context_label(self, payload: dict[str, Any]) -> None:
+        status = payload.get('status') if isinstance(payload.get('status'), dict) else {}
+        if not status:
+            return
+        now = dt.datetime.now()
+        self.root_widget.set_background(self.assets.background_for_hour(now.hour))
+        events = status.get('today_events') if isinstance(status.get('today_events'), list) else []
+        event_names: list[str] = []
+        for event in events:
+            if isinstance(event, dict):
+                name = str(event.get('name') or '').strip()
+                if name:
+                    event_names.append(name)
+        event_text = ', '.join(event_names) if event_names else 'no special event'
+        self.context_label.setText(
+            f"{now.strftime('%Y-%m-%d %H:%M')} · affection {status.get('affection', '?')} · "
+            f"{status.get('relationship_stage', 'relationship')} · {event_text}"
+        )
 
     def _handle_result(self, result: dict[str, Any]) -> None:
         self.set_busy(False)
@@ -746,6 +777,12 @@ QLabel#titleLabel {
 QLabel#statusLabel {
     color: #e9dacd;
     background: rgba(0, 0, 0, 88);
+    padding: 8px 12px;
+    border-radius: 10px;
+}
+QLabel#contextLabel {
+    color: #f2e4d7;
+    background: rgba(0, 0, 0, 74);
     padding: 8px 12px;
     border-radius: 10px;
 }
