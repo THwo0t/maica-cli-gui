@@ -8,6 +8,7 @@
 !run_gui_safe.ps1
 !run_cli.ps1
 !run_smoke_tests.ps1
+!build_gui_exe.ps1
 
 # Main source
 !maica cli/
@@ -56,3 +57,5 @@ maica gui assets/mas_raw/
 # Local archives and external source/model directories remain ignored by default:
 # MAICA/, MAICA_ChatSubmod/, MAICA_Server_Submod/, MAS/, Qwen3-Embedding-0.6B/,
 # MAICA_ds_basis/, *.zip, *.rpa, *.safetensors, etc.
+build/
+dist/

@@ -114,10 +114,8 @@ class GuiEngineWorker(QObject):
         if not autostart:
             self.status.emit('Embedding service is enabled but autostart is off.')
             return
-        script = CLI_DIR / 'embedding_service.py'
         args = [
-            sys.executable,
-            str(script),
+            *self._embedding_service_command(),
             '--host',
             str(config.get('embedding_service_host') or '127.0.0.1'),
             '--port',
@@ -147,6 +145,13 @@ class GuiEngineWorker(QObject):
                 return
             time.sleep(0.2)
         self.status.emit('Embedding service was started, but health check is not ready yet.')
+
+    def _embedding_service_command(self) -> list[str]:
+        if getattr(sys, 'frozen', False):
+            service_exe = Path(sys.executable).with_name('maica-embedding-service.exe')
+            if service_exe.exists():
+                return [str(service_exe)]
+        return [sys.executable, str(CLI_DIR / 'embedding_service.py')]
 
     def _stop_embedding_service(self) -> None:
         process = self.embedding_service_process

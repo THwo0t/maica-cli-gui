@@ -74,6 +74,26 @@ startup.
 The suite also launches the GUI once with an isolated safe test database under
 `maica gui/.safe_test/`.
 
+## Build Executable
+
+Experimental Windows packaging support is available:
+
+```powershell
+.\build_gui_exe.ps1
+```
+
+The script installs PyInstaller if needed and builds from
+`maica gui/maica_gui.spec`. Build output is written to `dist/maica-gui/` and is
+ignored by Git. Private config, databases, logs, FAISS indexes, TTS caches, and
+raw MAS assets are excluded from the spec.
+
+The spec builds two executables: `maica-gui.exe` and
+`maica-embedding-service.exe`. The second executable is used only when external
+embedding service mode is enabled.
+
+First-time PyInstaller builds can take several minutes because PySide6 analysis
+is heavy. Generated output stays outside Git.
+
 ## Diagnostics
 
 Create a local troubleshooting report without exposing API keys, memories, logs,

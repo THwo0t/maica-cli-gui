@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.3
+# MAICA GUI v0.9.4
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -232,6 +232,24 @@ python "maica gui\diagnostics.py"
 `diagnostics.py` prints a safe JSON report for local troubleshooting. It checks
 Python, Git, package availability, runtime paths, and a masked config summary.
 It does not print API keys, database rows, memories, or logs.
+
+## Packaging
+
+Experimental PyInstaller packaging is available from the repository root:
+
+```powershell
+.\build_gui_exe.ps1
+```
+
+The spec file is `maica gui/maica_gui.spec`. It includes the GUI source, shared
+CLI engine files, and the small runtime asset subset. It excludes private
+`config.json`, databases, logs, FAISS indexes, TTS caches, and raw MAS assets.
+Generated `build/` and `dist/` directories are ignored by Git.
+
+The build creates `maica-gui.exe` plus `maica-embedding-service.exe`; the GUI
+uses the service executable only when external embedding service mode is enabled.
+First-time PyInstaller builds can take several minutes because PySide6 analysis
+is heavy.
 
 ## Not Yet Included
 

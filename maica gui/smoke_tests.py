@@ -34,6 +34,7 @@ def compile_python() -> None:
         GUI_DIR / 'diagnostics.py',
         GUI_DIR / 'stt.py',
         GUI_DIR / 'tts.py',
+        GUI_DIR / 'maica_gui.spec',
         CLI_DIR / 'config_defaults.py',
         CLI_DIR / 'embedding_service.py',
         CLI_DIR / 'embedding_service_client.py',
@@ -52,7 +53,7 @@ def validate_json() -> None:
 
 
 def test_launchers_exist() -> None:
-    for name in ('run_gui.ps1', 'run_gui_safe.ps1', 'run_cli.ps1', 'run_smoke_tests.ps1'):
+    for name in ('run_gui.ps1', 'run_gui_safe.ps1', 'run_cli.ps1', 'run_smoke_tests.ps1', 'build_gui_exe.ps1'):
         check((ROOT_DIR / name).exists(), f'{name} is missing')
 
 
