@@ -34,15 +34,27 @@ class GuiEngineWorker(QObject):
     finished = Signal(dict)
     data_ready = Signal(dict)
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        db_path: str | Path | None = None,
+        app_dir: str | Path | None = None,
+    ) -> None:
         super().__init__()
         self.engine: MaicaEngine | None = None
         self.embedding_service_process: subprocess.Popen[Any] | None = None
+        self.config_path = Path(config_path).resolve() if config_path else None
+        self.db_path = Path(db_path).resolve() if db_path else None
+        self.app_dir = Path(app_dir).resolve() if app_dir else CLI_DIR
 
     @Slot()
     def initialize(self) -> None:
         try:
-            self.engine = MaicaEngine()
+            self.engine = MaicaEngine(
+                config_path=self.config_path,
+                db_path=self.db_path,
+                app_dir=self.app_dir,
+            )
             self._apply_gui_safety_overrides()
             self._sync_embedding_service()
             self.config_ready.emit(dict(self.engine.config))
@@ -241,7 +253,11 @@ class GuiEngineWorker(QObject):
 
     def _ensure_engine(self) -> MaicaEngine:
         if self.engine is None:
-            self.engine = MaicaEngine()
+            self.engine = MaicaEngine(
+                config_path=self.config_path,
+                db_path=self.db_path,
+                app_dir=self.app_dir,
+            )
             self._apply_gui_safety_overrides()
             self._sync_embedding_service()
         return self.engine

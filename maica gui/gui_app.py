@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.9.2.
+"""MAICA GUI v0.9.3.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -8,6 +8,7 @@ The CLI remains a debugger and is not started in the background.
 
 from __future__ import annotations
 
+import argparse
 import sys
 import datetime as dt
 import threading
@@ -47,7 +48,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.9.2'
+APP_VERSION = '0.9.3'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -485,14 +486,20 @@ class MainWindow(QMainWindow):
     config_save_requested = Signal(dict)
     stt_finished = Signal(dict)
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        config_path: str | Path | None = None,
+        db_path: str | Path | None = None,
+        safe_test_mode: bool = False,
+    ) -> None:
         super().__init__()
         if not MANIFEST_PATH.exists():
             raise FileNotFoundError(f'Missing GUI asset manifest: {MANIFEST_PATH}')
 
+        self.safe_test_mode = safe_test_mode
         self.assets = AssetManager(MANIFEST_PATH)
         self.thread = QThread(self)
-        self.worker = GuiEngineWorker()
+        self.worker = GuiEngineWorker(config_path=config_path, db_path=db_path, app_dir=ROOT_DIR / 'maica cli')
         self.worker.moveToThread(self.thread)
         self.tts = create_tts({})
         self.stt = create_stt({})
@@ -503,13 +510,16 @@ class MainWindow(QMainWindow):
         self.settings_dialog: SettingsDialog | None = None
         self.current_config: dict[str, Any] = {}
 
-        self.setWindowTitle(f'MAICA GUI v{APP_VERSION}')
+        suffix = ' · SAFE TEST DB' if self.safe_test_mode else ''
+        self.setWindowTitle(f'MAICA GUI v{APP_VERSION}{suffix}')
         self.resize(1180, 760)
         self.setMinimumSize(980, 640)
         self._build_ui()
         self._connect_worker()
         self.set_emotion('smile')
         self.add_system_message('MAICA GUI started. CLI is available as a debugger.')
+        if self.safe_test_mode:
+            self.add_system_message('Safe test DB mode is active. Real memories/profile are not being modified.')
         self.thread.start()
 
     def _connect_worker(self) -> None:
@@ -815,8 +825,8 @@ class MainWindow(QMainWindow):
         event_text = 'today: ' + ', '.join(event_names) if event_names else 'ordinary day'
         bg_mode = str(self.current_config.get('gui_background_mode') or 'auto')
         self.context_label.setText(
-            f"{now.strftime('%Y-%m-%d %H:%M')} · bg {bg_mode} · affection {status.get('affection', '?')} · "
-            f"{status.get('relationship_stage', 'relationship')} · {event_text}"
+            f"{now.strftime('%Y-%m-%d %H:%M')} | bg {bg_mode} | affection {status.get('affection', '?')} | "
+            f"{status.get('relationship_stage', 'relationship')} | {event_text}"
         )
 
     def _handle_result(self, result: dict[str, Any]) -> None:
@@ -832,7 +842,7 @@ class MainWindow(QMainWindow):
         self.set_emotion(str(visual_state.get('emotion') or emotion))
         self.add_monika_message(reply_text, emotion, result.get('response_time', ''))
         if self.tts_enabled and reply_text:
-            self.add_system_message('TTS 正在合成/播放...')
+            self.add_system_message('TTS is synthesizing/playing...')
             self.tts.speak(reply_text)
             QTimer.singleShot(1800, self.report_tts_error_if_any)
             QTimer.singleShot(6000, self.report_tts_error_if_any)
@@ -843,7 +853,7 @@ class MainWindow(QMainWindow):
         error = str(getattr(self.tts, 'last_error', '') or '').strip()
         if error and error != self.last_tts_error:
             self.last_tts_error = error
-            self.add_system_message(f'TTS 错误：{error}')
+            self.add_system_message(f'TTS error: {error}')
 
 
 STYLE_SHEET = """
@@ -908,10 +918,23 @@ QPushButton:disabled {
 
 
 def main() -> int:
-    app = QApplication(sys.argv)
+    parser = argparse.ArgumentParser(description='MAICA GUI')
+    parser.add_argument('--config', default='', help='Optional path to config.json')
+    parser.add_argument('--db', default='', help='Optional path to SQLite database')
+    parser.add_argument('--safe-test-db', action='store_true', help='Use an isolated GUI test database')
+    args, qt_args = parser.parse_known_args()
+
+    config_path = Path(args.config).resolve() if args.config else None
+    db_path = Path(args.db).resolve() if args.db else None
+    if args.safe_test_db:
+        safe_dir = GUI_DIR / '.safe_test'
+        safe_dir.mkdir(parents=True, exist_ok=True)
+        db_path = safe_dir / 'maica_cli_test.db'
+
+    app = QApplication([sys.argv[0], *qt_args])
     app.setApplicationName('MAICA GUI')
     app.setFont(QFont('Microsoft YaHei UI', 10))
-    window = MainWindow()
+    window = MainWindow(config_path=config_path, db_path=db_path, safe_test_mode=args.safe_test_db)
     window.show()
     return app.exec()
 

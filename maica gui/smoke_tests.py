@@ -52,7 +52,7 @@ def validate_json() -> None:
 
 
 def test_launchers_exist() -> None:
-    for name in ('run_gui.ps1', 'run_cli.ps1', 'run_smoke_tests.ps1'):
+    for name in ('run_gui.ps1', 'run_gui_safe.ps1', 'run_cli.ps1', 'run_smoke_tests.ps1'):
         check((ROOT_DIR / name).exists(), f'{name} is missing')
 
 
@@ -125,6 +125,37 @@ def test_gui_offscreen() -> None:
     check(completed.returncode == 0, completed.stderr or completed.stdout)
 
 
+def test_gui_safe_offscreen() -> None:
+    script = (
+        "import sys;"
+        "from pathlib import Path;"
+        "from PySide6.QtCore import QTimer;"
+        "from PySide6.QtWidgets import QApplication;"
+        f"sys.path.insert(0, {str(GUI_DIR)!r});"
+        "from gui_app import GUI_DIR, MainWindow;"
+        "app=QApplication([]);"
+        "safe_dir=GUI_DIR/'.safe_test';"
+        "safe_dir.mkdir(parents=True, exist_ok=True);"
+        "window=MainWindow(db_path=safe_dir/'maica_cli_test.db', safe_test_mode=True);"
+        "QTimer.singleShot(2200, window.close);"
+        "QTimer.singleShot(5000, app.quit);"
+        "raise SystemExit(app.exec())"
+    )
+    env = os.environ.copy()
+    env['QT_QPA_PLATFORM'] = 'offscreen'
+    completed = subprocess.run(
+        [sys.executable, '-c', script],
+        cwd=str(ROOT_DIR),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=10,
+    )
+    check(completed.returncode == 0, completed.stderr or completed.stdout)
+    check((GUI_DIR / '.safe_test' / 'maica_cli_test.db').exists(), 'safe test DB was not created')
+
+
 def main() -> int:
     compile_python()
     print('compile_python ok')
@@ -140,6 +171,8 @@ def main() -> int:
     print('text_helpers ok')
     test_gui_offscreen()
     print('gui_offscreen ok')
+    test_gui_safe_offscreen()
+    print('gui_safe_offscreen ok')
     print('smoke_tests ok')
     return 0
 

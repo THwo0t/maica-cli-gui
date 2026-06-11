@@ -28,6 +28,12 @@ yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
 .\run_gui.ps1
 ```
 
+For isolated GUI testing without touching the real memory/profile database:
+
+```powershell
+.\run_gui_safe.ps1
+```
+
 If needed:
 
 ```powershell
@@ -64,6 +70,9 @@ Run the lightweight local test suite:
 The smoke test checks Python compilation, public JSON config validity, TTS text
 cleaning, STT disabled-provider behavior, diagnostics, and GUI offscreen
 startup.
+
+The suite also launches the GUI once with an isolated safe test database under
+`maica gui/.safe_test/`.
 
 ## Diagnostics
 

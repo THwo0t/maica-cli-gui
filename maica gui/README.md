@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.2
+# MAICA GUI v0.9.3
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -24,6 +24,15 @@ For the CLI debugger:
 ```powershell
 .\run_cli.ps1
 ```
+
+For isolated GUI testing without touching the real memory/profile database:
+
+```powershell
+.\run_gui_safe.ps1
+```
+
+This starts the same GUI with `--safe-test-db`, using
+`maica gui/.safe_test/maica_cli_test.db`.
 
 ## Assets
 

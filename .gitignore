@@ -5,6 +5,7 @@
 !.gitignore
 !README.md
 !run_gui.ps1
+!run_gui_safe.ps1
 !run_cli.ps1
 !run_smoke_tests.ps1
 
@@ -38,6 +39,7 @@ maica gui/*.db
 maica gui/__pycache__/
 maica gui/**/__pycache__/
 maica gui/.tts_cache/
+maica gui/.safe_test/
 
 # GUI runtime assets only. Do not commit the full copied MAS raw asset tree.
 !maica gui assets/
