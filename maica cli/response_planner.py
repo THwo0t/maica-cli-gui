@@ -250,22 +250,21 @@ def format_response_plan_context(plan: dict[str, Any], language: str = 'zh') -> 
             )
         if examples:
             lines.append(examples)
-        lines.append('Use examples lightly for rhythm and intimacy. Final dialogue must be English.')
         return '\n'.join(line for line in lines if line)
 
     lines = [
-        '本轮对话方向:',
-        f'- 类别: {plan.get("category", "daily")} / {plan.get("intent", "general_daily")}',
-        f'- 模式: {plan.get("mode", "daily_small_alive")}',
-        f'- 长度: {plan.get("length", "medium")}',
+        'This turn direction:',
+        f'- Category: {plan.get("category", "daily")} / {plan.get("intent", "general_daily")}',
+        f'- Mode: {plan.get("mode", "daily_small_alive")}',
+        f'- Length: {plan.get("length", "medium")}',
     ]
     if planner_mode != 'example_only':
         lines.extend(
             [
-                f'- 情绪底色: {plan.get("emotion", "neutral")}',
-                f'- 关系氛围: {plan.get("relationship_note", "")}',
-                f'- 风格: {plan.get("style_directive", "")}',
-                f'- 质感: {", ".join(str(item) for item in plan.get("texture", []))}',
+                f'- Emotional color: {plan.get("emotion", "neutral")}',
+                f'- Relationship note: {plan.get("relationship_note", "")}',
+                f'- Style: {plan.get("style_directive", "")}',
+                f'- Texture: {", ".join(str(item) for item in plan.get("texture", []))}',
             ]
         )
     if examples:

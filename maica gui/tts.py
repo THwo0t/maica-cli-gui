@@ -385,7 +385,10 @@ class BailianCosyVoiceTTS:
             self.process = process
         try:
             stdout, stderr = process.communicate()
-            if process.returncode not in (0, None):
+            # A superseded/stopped generation exits non-zero because we
+            # terminated it on purpose; only a still-current playback that
+            # dies is a real error.
+            if process.returncode not in (0, None) and self._is_current(generation):
                 detail = (stderr or stdout or '').strip()
                 raise RuntimeError(f'audio playback failed: {detail or process.returncode}')
         finally:

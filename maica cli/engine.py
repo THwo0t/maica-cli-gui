@@ -18,6 +18,7 @@ from mtrigger import apply_mtrigger
 from response import limit_dialogue_sentences, parse_assistant_response
 from spire_topics import choose_spire_topic
 from store import Store
+from text_utils import cjk_ratio
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -114,6 +115,21 @@ def normalize_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def _reply_language_mismatch(text: str, language: str) -> bool:
+    text = str(text or '').strip()
+    if not text:
+        return False
+    english = str(language or '').lower().startswith('en')
+    if english:
+        # A ratio threshold tolerates CJK names, nicknames, and quoted user
+        # words inside an otherwise-English reply; contains_cjk() would
+        # trigger a pointless rewrite call on every such turn.
+        return cjk_ratio(text) >= 0.2
+    letters = sum(1 for char in text if char.isascii() and char.isalpha())
+    cjk = cjk_ratio(text)
+    return cjk < 0.08 and letters >= 6
+
+
 class MaicaEngine:
     """Single runtime entrypoint shared by CLI and future GUI."""
 
@@ -189,6 +205,9 @@ class MaicaEngine:
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
             reply = apply_style_postprocess(parsed["text"], mfocus_plan, self.config)
+            reply, rewrite_info = self._enforce_reply_language(reply)
+            if rewrite_info:
+                mfocus_plan["language_rewrite"] = rewrite_info
 
             self.store.add_message("user", user_input)
             self.store.add_message("assistant", reply)
@@ -275,6 +294,9 @@ class MaicaEngine:
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
             reply = apply_style_postprocess(parsed["text"], mfocus_plan, self.config)
+            reply, rewrite_info = self._enforce_reply_language(reply)
+            if rewrite_info:
+                mfocus_plan["language_rewrite"] = rewrite_info
 
             self.store.add_message("assistant", reply)
             self.store.increment_chat_turns()
@@ -375,6 +397,24 @@ class MaicaEngine:
                 pass
         return str(result.get("content") or ""), usage
 
+    def _call_aux(self, messages: list[dict[str, str]], source: str, overrides: dict[str, Any] | None = None) -> str:
+        """Auxiliary model call (metadata, rewrite) with token accounting."""
+        result = self.client.chat_with_usage(messages, overrides)
+        usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        if self.config.get("token_stats_enabled", True):
+            try:
+                self.store.add_token_usage(
+                    source,
+                    str(result.get("model") or self.config.get("model") or ""),
+                    int(usage.get("prompt_tokens") or 0),
+                    int(usage.get("completion_tokens") or 0),
+                    int(usage.get("total_tokens") or 0),
+                    0.0,
+                )
+            except Exception:
+                pass
+        return str(result.get("content") or "")
+
     def _extract_metadata_if_needed(self, parsed: dict[str, Any]) -> dict[str, Any]:
         if not self.config.get("metadata_extract_enabled", True):
             return parsed
@@ -389,11 +429,12 @@ class MaicaEngine:
             "\"action\":{\"type\":\"none\"}}. Do not rewrite the reply."
         )
         try:
-            raw = self.client.chat(
+            raw = self._call_aux(
                 [
                     {"role": "system", "content": prompt},
                     {"role": "user", "content": text},
                 ],
+                "metadata_extract",
                 overrides={"temperature": 0.0, "max_tokens": 120},
             )
             meta = parse_assistant_response(raw)
@@ -404,6 +445,41 @@ class MaicaEngine:
         except Exception:
             pass
         return parsed
+
+    def _enforce_reply_language(self, reply: str) -> tuple[str, dict[str, Any]]:
+        """Return (reply, rewrite_info). rewrite_info is {} when nothing happened."""
+        reply = str(reply or '').strip()
+        if not self.config.get("language_enforce_rewrite", True):
+            return reply, {}
+        language = str(self.config.get("language") or "en").lower()
+        if not _reply_language_mismatch(reply, language):
+            return reply, {}
+        english = language.startswith("en")
+        target = "natural English" if english else "natural Simplified Chinese"
+        prompt = (
+            f"Rewrite the dialogue body into {target}. "
+            "Preserve the meaning, intimacy, sentence breaks, and Monika's voice. "
+            "Do not add explanations. Do not add metadata, brackets, JSON, or stage directions. "
+            "Return only the rewritten dialogue body."
+        )
+        info: dict[str, Any] = {"triggered": True, "rewritten": False}
+        try:
+            rewritten = self._call_aux(
+                [
+                    {"role": "system", "content": prompt},
+                    {"role": "user", "content": reply},
+                ],
+                "language_rewrite",
+                overrides={"temperature": 0.1, "max_tokens": min(700, int(self.config.get("max_tokens", 900)))},
+            )
+            parsed = parse_assistant_response(rewritten)
+            text = str(parsed.get("text") or rewritten).strip()
+            if text and not _reply_language_mismatch(text, language):
+                info["rewritten"] = True
+                return text, info
+        except Exception as exc:
+            info["error"] = str(exc)
+        return reply, info
 
     def _auto_summarize_if_needed(self) -> str:
         if not self.config.get("auto_memory_summary_enabled", False):

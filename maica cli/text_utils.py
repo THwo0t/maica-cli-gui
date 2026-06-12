@@ -34,6 +34,17 @@ def split_query_tokens(text: str) -> list[str]:
     return tokens
 
 
+def contains_cjk(text: str) -> bool:
+    return any('\u4e00' <= char <= '\u9fff' for char in str(text or ''))
+
+
+def cjk_ratio(text: str) -> float:
+    chars = [char for char in str(text or '') if not char.isspace()]
+    if not chars:
+        return 0.0
+    return sum(1 for char in chars if '\u4e00' <= char <= '\u9fff') / len(chars)
+
+
 def extract_json_object(text: str) -> dict[str, Any] | None:
     """Extract the first JSON object from a model reply."""
     text = str(text or '').strip()

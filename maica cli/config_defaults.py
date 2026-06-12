@@ -50,6 +50,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "response_planner_example_limit": 3,
     "response_output_mode": "dual",
     "metadata_extract_enabled": True,
+    "language_enforce_rewrite": True,
     "example_bank_enabled": True,
     "example_bank_core_paths": ["data/dialogue_examples_core.jsonl"],
     "example_bank_paths": ["data/dialogue_examples_maica_cleaned.jsonl"],

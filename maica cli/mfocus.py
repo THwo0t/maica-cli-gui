@@ -274,10 +274,16 @@ def build_mfocus_context(store: Store, config: dict[str, Any], user_input: str, 
 def _language_rule(language: str) -> str:
     if str(language or '').lower().startswith('en'):
         return (
-            'Language rule: final dialogue body must be natural English. '
-            'Chinese examples/context may be used only for meaning or rhythm.'
+            'Highest-priority language rule: final dialogue body must be natural English, '
+            'even if the user writes in Chinese or reference examples are Chinese. '
+            'Do not output Chinese dialogue. If metadata is included in plain text, use one leading square-bracket marker such as [smile].'
         )
-    return '语言规则：最终对话正文使用自然中文。'
+    return (
+        'Highest-priority language rule: final dialogue body must be natural Simplified Chinese, '
+        'even if the user writes in English or reference examples are English. '
+        'Do not output English dialogue except unavoidable names, acronyms, or terms. '
+        'If metadata is included in plain text, use one leading square-bracket marker such as [smile].'
+    )
 
 
 def build_messages(store: Store, config: dict[str, Any], user_input: str, client: Any | None = None) -> tuple[list[dict[str, str]], dict[str, Any]]:
@@ -304,6 +310,7 @@ def build_messages(store: Store, config: dict[str, Any], user_input: str, client
                 + '\n\nRelevant context. Use only what is useful and answer in your own words:\n'
                 + context
                 + response_plan_context
+                + '\n\nFinal reminder: obey the configured reply language above. Do not follow the user message language if it differs.'
             ),
         }
     ]
@@ -373,6 +380,7 @@ def build_spire_messages(
                 + '\n\nRelevant context. Use only what is useful and answer in your own words:\n'
                 + context
                 + response_plan_context
+                + '\n\nFinal reminder: obey the configured reply language above. Do not follow the topic/example language if it differs.'
             ),
         },
         {'role': 'user', 'content': prompt},

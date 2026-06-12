@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.10.4.
+"""MAICA GUI v0.10.4.1.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QSpinBox,
     QTabWidget,
@@ -48,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.10.4'
+APP_VERSION = '0.10.4.1'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -437,7 +438,14 @@ class SettingsDialog(QDialog):
         form.addRow('STT provider', self.stt_provider)
         form.addRow('STT language', self.stt_language)
         form.addRow('STT timeout', self.stt_timeout)
-        layout.addLayout(form)
+
+        form_host = QWidget()
+        form_host.setLayout(form)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(form_host)
+        layout.addWidget(scroll, 1)
 
         note = QLabel('Secrets such as API keys are intentionally not shown here. Edit local config.json if needed.')
         note.setWordWrap(True)
@@ -783,9 +791,9 @@ class MainWindow(QMainWindow):
 
     def add_monika_message(self, text: str, emotion: str, response_time: Any = '') -> None:
         lines = '<br>'.join(html_escape(line) for line in text.splitlines() if line.strip())
-        meta = f'emotion: {html_escape(emotion or "neutral")}'
+        meta = f'[emotion: {html_escape(emotion or "neutral")}]'
         if response_time != '':
-            meta += f' · {response_time}s'
+            meta += f' [time: {response_time}s]'
         self.chat_view.append(f'<div class="monika"><b>monika</b><br>{lines}<br><span>{meta}</span></div>')
 
     def set_busy(self, busy: bool) -> None:

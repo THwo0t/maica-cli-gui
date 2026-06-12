@@ -40,6 +40,7 @@
   "response_planner_example_limit": 3,
   "response_output_mode": "dual",
   "metadata_extract_enabled": true,
+  "language_enforce_rewrite": true,
   "example_bank_enabled": true,
   "example_bank_core_paths": [
     "data/dialogue_examples_core.jsonl"

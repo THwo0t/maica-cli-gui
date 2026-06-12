@@ -9,7 +9,7 @@ from typing import Any
 
 from embedding_index import search_vector_examples
 from embedding_service_client import search_service_examples
-from text_utils import split_query_tokens
+from text_utils import contains_cjk, split_query_tokens
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -388,6 +388,10 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
         candidates = load_dialogue_examples(_example_paths(config))
         retrieval_mode = 'lexical' if retrieval_mode != 'service' else 'service_fallback_lexical'
 
+    # When the reply language is English, CJK examples cannot demonstrate
+    # wording or rhythm, so they are filtered here instead of being shown
+    # as empty placeholders in the prompt.
+    english_target = str(config.get('language') or 'en').lower().startswith('en')
     scored: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
     for item in candidates:
         if not isinstance(item, dict):
@@ -395,6 +399,8 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
         user = str(item.get('user') or '').strip()
         assistant = str(item.get('assistant') or '').strip()
         if not user or not assistant:
+            continue
+        if english_target and (contains_cjk(user) or contains_cjk(assistant)):
             continue
         if _safe_int(item.get('quality'), 0) < min_quality:
             continue
@@ -451,10 +457,7 @@ def format_examples_for_prompt(examples: list[dict[str, Any]], language: str = '
     if not examples:
         return ''
     english = str(language or '').lower().startswith('en')
-    if english:
-        lines = ['Reference examples for rhythm and intimacy. Do not reuse exact wording:']
-    else:
-        lines = ['参考样例只用于节奏、亲密度和语气，不要求复述内容：']
+    lines = ['Reference examples for rhythm and intimacy only. Do not reuse exact wording.']
     for index, item in enumerate(examples[:5], start=1):
         user = str(item.get('user') or '').strip()
         assistant = str(item.get('assistant') or '').strip()
@@ -462,6 +465,6 @@ def format_examples_for_prompt(examples: list[dict[str, Any]], language: str = '
         lines.append(f'Example {index}:')
         lines.append(f'User: {user}')
         lines.append(f'Monika: {assistant}')
-        if notes:
+        if notes and not (english and contains_cjk(notes)):
             lines.append(f'Notes: {notes}')
     return '\n'.join(lines)

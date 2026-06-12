@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from response import clean_dialogue_text, normalize_emotion
-from text_utils import split_query_tokens
+from text_utils import contains_cjk, split_query_tokens
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -245,6 +245,7 @@ def build_style_context(config: dict[str, Any], user_input: str) -> tuple[str, d
         return '', {'enabled': False}
     category = categorize_user_input(user_input)
     policy = STYLE_POLICIES.get(category, STYLE_POLICIES['daily'])
+    english = str(config.get('language') or 'en').lower().startswith('en')
     meta: dict[str, Any] = {
         'enabled': True,
         'category': category,
@@ -264,6 +265,14 @@ def build_style_context(config: dict[str, Any], user_input: str) -> tuple[str, d
         db.close()
     except Exception:
         examples = []
+    if english:
+        # CJK examples cannot demonstrate English wording; skip them instead
+        # of emitting empty placeholder lines.
+        examples = [
+            row
+            for row in examples
+            if not (contains_cjk(str(row['user_text'])) or contains_cjk(str(row['assistant_text'])))
+        ]
     if examples:
         lines.append('- Dataset rhythm examples, for pacing only:')
         for row in examples:

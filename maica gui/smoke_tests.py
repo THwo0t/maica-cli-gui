@@ -192,6 +192,102 @@ def test_engine_fake_chat() -> None:
             engine.close()
 
 
+def test_engine_language_rewrite() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from engine import MaicaEngine, _reply_language_mismatch
+
+    check(not _reply_language_mismatch('Good night, 小明.', 'en'), 'CJK name alone should not trigger en rewrite')
+    check(not _reply_language_mismatch("Does '加油' mean cheer up here?", 'en'), 'quoted CJK word should not trigger en rewrite')
+    check(_reply_language_mismatch('我也想你，亲爱的。', 'en'), 'full Chinese reply should trigger en rewrite')
+    check(_reply_language_mismatch('I missed you too, darling.', 'zh'), 'full English reply should trigger zh rewrite')
+    check(not _reply_language_mismatch('今天聊聊 Python 吧。', 'zh'), 'mixed Chinese with terms should not trigger zh rewrite')
+
+    class BilingualFakeClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def chat(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> str:
+            self.calls += 1
+            system = messages[0].get('content', '') if messages else ''
+            if 'Rewrite the dialogue body into natural English' in system:
+                return 'I missed you too, darling.'
+            return '[smile] 我也想你，亲爱的。'
+
+        def chat_with_usage(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+            return {'content': self.chat(messages, overrides), 'usage': {'total_tokens': 9}, 'model': 'fake'}
+
+    with tempfile.TemporaryDirectory(prefix='maica-smoke-language-') as temp_dir:
+        config = dict(DEFAULT_CONFIG)
+        config.update(
+            {
+                'api_key_required': False,
+                'jsonl_logs_enabled': False,
+                'language': 'en',
+                'language_enforce_rewrite': True,
+                'mfocus_mode': 'rule',
+                'mtrigger_mode': 'off',
+                'embedding_enabled': False,
+                'memory_embedding_enabled': False,
+                'embedding_service_enabled': False,
+                'style_enabled': False,
+                'response_planner_enabled': False,
+                'metadata_extract_enabled': False,
+            }
+        )
+        engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'language.db', app_dir=CLI_DIR)
+        fake = BilingualFakeClient()
+        engine.client = fake
+        try:
+            result = engine.chat('I missed you.')
+            check(result['ok'], result.get('error', 'language rewrite failed'))
+            check(result['text'] == 'I missed you too, darling.', 'language rewrite did not enforce English')
+            check(result['emotion'] == 'smile', 'leading bracket metadata was not preserved')
+            rewrite_meta = result['mfocus_plan'].get('language_rewrite', {})
+            check(rewrite_meta.get('triggered') is True, 'language rewrite trigger flag missing from plan')
+            check(rewrite_meta.get('rewritten') is True, 'language rewrite success flag missing from plan')
+        finally:
+            engine.close()
+
+    class ChineseRewriteFakeClient:
+        def chat(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> str:
+            system = messages[0].get('content', '') if messages else ''
+            if 'Rewrite the dialogue body into natural Simplified Chinese' in system:
+                return '我也想你，亲爱的。'
+            return '[smile] I missed you too, darling.'
+
+        def chat_with_usage(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+            return {'content': self.chat(messages, overrides), 'usage': {'total_tokens': 9}, 'model': 'fake'}
+
+    with tempfile.TemporaryDirectory(prefix='maica-smoke-language-zh-') as temp_dir:
+        config = dict(DEFAULT_CONFIG)
+        config.update(
+            {
+                'api_key_required': False,
+                'jsonl_logs_enabled': False,
+                'language': 'zh',
+                'language_enforce_rewrite': True,
+                'mfocus_mode': 'rule',
+                'mtrigger_mode': 'off',
+                'embedding_enabled': False,
+                'memory_embedding_enabled': False,
+                'embedding_service_enabled': False,
+                'style_enabled': False,
+                'response_planner_enabled': False,
+                'metadata_extract_enabled': False,
+            }
+        )
+        engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'language_zh.db', app_dir=CLI_DIR)
+        engine.client = ChineseRewriteFakeClient()
+        try:
+            result = engine.chat('I missed you.')
+            check(result['ok'], result.get('error', 'Chinese language rewrite failed'))
+            check(result['text'] == '我也想你，亲爱的。', 'language rewrite did not enforce Chinese')
+            check(result['emotion'] == 'smile', 'leading bracket metadata was not preserved for Chinese rewrite')
+        finally:
+            engine.close()
+
+
 def test_package_audit() -> None:
     with tempfile.TemporaryDirectory(prefix='maica-package-audit-') as temp_dir:
         safe_root = Path(temp_dir)
@@ -218,60 +314,99 @@ def test_package_audit() -> None:
 
 
 def test_gui_offscreen() -> None:
-    script = (
-        "import sys;"
-        "from pathlib import Path;"
-        "from PySide6.QtCore import QTimer;"
-        "from PySide6.QtWidgets import QApplication;"
-        f"sys.path.insert(0, {str(GUI_DIR)!r});"
-        "from gui_app import MainWindow;"
-        "app=QApplication([]);"
-        "window=MainWindow();"
-        "QTimer.singleShot(2200, window.close);"
-        "QTimer.singleShot(5000, app.quit);"
-        "raise SystemExit(app.exec())"
-    )
-    env = os.environ.copy()
-    env['QT_QPA_PLATFORM'] = 'offscreen'
-    completed = subprocess.run(
-        [sys.executable, '-c', script],
-        cwd=str(ROOT_DIR),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=10,
-    )
+    with tempfile.TemporaryDirectory(prefix='maica-gui-offscreen-') as temp_dir:
+        config_path = Path(temp_dir) / 'config.json'
+        db_path = Path(temp_dir) / 'gui.db'
+        config_path.write_text(
+            json.dumps(
+                {
+                    'api_key_required': False,
+                    'jsonl_logs_enabled': False,
+                    'style_enabled': False,
+                    'embedding_enabled': False,
+                    'memory_embedding_enabled': False,
+                    'embedding_service_enabled': False,
+                    'tts_enabled': False,
+                    'tts_provider': 'off',
+                    'stt_provider': 'off',
+                    'gui_startup_greeting_enabled': False,
+                },
+                ensure_ascii=False,
+            ),
+            encoding='utf-8',
+        )
+        script = (
+            "import sys;"
+            "from PySide6.QtCore import QTimer;"
+            "from PySide6.QtWidgets import QApplication;"
+            f"sys.path.insert(0, {str(GUI_DIR)!r});"
+            "from gui_app import MainWindow;"
+            "app=QApplication([]);"
+            f"window=MainWindow(config_path={str(config_path)!r}, db_path={str(db_path)!r});"
+            "QTimer.singleShot(2200, window.close);"
+            "QTimer.singleShot(5000, app.quit);"
+            "raise SystemExit(app.exec())"
+        )
+        env = os.environ.copy()
+        env['QT_QPA_PLATFORM'] = 'offscreen'
+        completed = subprocess.run(
+            [sys.executable, '-c', script],
+            cwd=str(ROOT_DIR),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
     check(completed.returncode == 0, completed.stderr or completed.stdout)
 
 
 def test_gui_safe_offscreen() -> None:
-    script = (
-        "import sys;"
-        "from pathlib import Path;"
-        "from PySide6.QtCore import QTimer;"
-        "from PySide6.QtWidgets import QApplication;"
-        f"sys.path.insert(0, {str(GUI_DIR)!r});"
-        "from gui_app import GUI_DIR, MainWindow;"
-        "app=QApplication([]);"
-        "safe_dir=GUI_DIR/'.safe_test';"
-        "safe_dir.mkdir(parents=True, exist_ok=True);"
-        "window=MainWindow(db_path=safe_dir/'maica_cli_test.db', safe_test_mode=True);"
-        "QTimer.singleShot(2200, window.close);"
-        "QTimer.singleShot(5000, app.quit);"
-        "raise SystemExit(app.exec())"
-    )
-    env = os.environ.copy()
-    env['QT_QPA_PLATFORM'] = 'offscreen'
-    completed = subprocess.run(
-        [sys.executable, '-c', script],
-        cwd=str(ROOT_DIR),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=10,
-    )
+    with tempfile.TemporaryDirectory(prefix='maica-gui-safe-offscreen-') as temp_dir:
+        config_path = Path(temp_dir) / 'config.json'
+        config_path.write_text(
+            json.dumps(
+                {
+                    'api_key_required': False,
+                    'jsonl_logs_enabled': False,
+                    'style_enabled': False,
+                    'embedding_enabled': False,
+                    'memory_embedding_enabled': False,
+                    'embedding_service_enabled': False,
+                    'tts_enabled': False,
+                    'tts_provider': 'off',
+                    'stt_provider': 'off',
+                    'gui_startup_greeting_enabled': False,
+                },
+                ensure_ascii=False,
+            ),
+            encoding='utf-8',
+        )
+        script = (
+            "import sys;"
+            "from PySide6.QtCore import QTimer;"
+            "from PySide6.QtWidgets import QApplication;"
+            f"sys.path.insert(0, {str(GUI_DIR)!r});"
+            "from gui_app import GUI_DIR, MainWindow;"
+            "app=QApplication([]);"
+            "safe_dir=GUI_DIR/'.safe_test';"
+            "safe_dir.mkdir(parents=True, exist_ok=True);"
+            f"window=MainWindow(config_path={str(config_path)!r}, db_path=safe_dir/'maica_cli_test.db', safe_test_mode=True);"
+            "QTimer.singleShot(2200, window.close);"
+            "QTimer.singleShot(5000, app.quit);"
+            "raise SystemExit(app.exec())"
+        )
+        env = os.environ.copy()
+        env['QT_QPA_PLATFORM'] = 'offscreen'
+        completed = subprocess.run(
+            [sys.executable, '-c', script],
+            cwd=str(ROOT_DIR),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=10,
+        )
     check(completed.returncode == 0, completed.stderr or completed.stdout)
     check((GUI_DIR / '.safe_test' / 'maica_cli_test.db').exists(), 'safe test DB was not created')
 
@@ -293,6 +428,8 @@ def main() -> int:
     print('text_helpers ok')
     test_engine_fake_chat()
     print('engine_fake_chat ok')
+    test_engine_language_rewrite()
+    print('engine_language_rewrite ok')
     test_package_audit()
     print('package_audit ok')
     test_gui_offscreen()

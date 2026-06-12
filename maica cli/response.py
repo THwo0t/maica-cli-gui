@@ -230,18 +230,20 @@ def limit_dialogue_sentences(text: str, max_sentences: int) -> str:
 
 def response_format_instruction(language: str = 'zh', mode: str = 'dual') -> str:
     english = str(language or '').lower().startswith('en')
+    target = 'English' if english else 'Simplified Chinese'
     if mode == 'json':
         return (
             'Output exactly one JSON object: {"segments":[{"text":"one natural sentence",'
-            '"emotion":"smile","action":{"type":"none"}}]}.'
+            '"emotion":"smile","action":{"type":"none"}}]}. '
+            f'Every text field must be natural {target}.'
         )
     if mode == 'legacy_marker':
-        if english:
-            return 'Reply in natural English. You may prefix one emotion marker like [smile], [shy], or [concerned].'
-        return '请自然回复。可以在开头使用一个情绪标记，例如 [smile]、[shy]、[concerned]。'
-    if english:
         return (
-            'Reply in natural English. Prefer plain dialogue with an optional leading emotion marker '
-            'like [smile], [shy], or [concerned]. JSON is also accepted if it feels natural.'
+            f'Reply in natural {target}. You may prefix exactly one metadata marker in square brackets, '
+            'such as [smile], [shy], or [concerned]. Do not use parenthesized or starred stage directions.'
         )
-    return '请自然回复。可以使用开头情绪标记，也可以输出 JSON；正文必须像自然聊天。'
+    return (
+        f'Reply in natural {target}. Prefer plain dialogue with an optional leading metadata marker in square brackets, '
+        'such as [smile], [shy], or [concerned]. JSON is also accepted, but any dialogue text must use the configured language. '
+        'Do not use parenthesized or starred stage directions in the dialogue body.'
+    )

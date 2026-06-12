@@ -147,7 +147,7 @@ def gh_auth_snapshot() -> dict[str, Any]:
 def collect_report() -> dict[str, Any]:
     return {
         'app': 'MAICA CLI GUI',
-        'diagnostics_version': '0.10.4',
+        'diagnostics_version': '0.10.4.1',
         'python': {
             'executable': sys.executable,
             'version': sys.version,
