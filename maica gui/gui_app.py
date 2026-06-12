@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.9.8.
+"""MAICA GUI v0.10.4.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -48,7 +48,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.9.8'
+APP_VERSION = '0.10.4'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -62,7 +62,9 @@ from tts import create_tts  # noqa: E402
 
 PROFILE_FIELDS = ('player_name', 'birthday', 'location', 'nicknames', 'affection')
 LANGUAGE_OPTIONS = ('en', 'zh')
-MODE_OPTIONS = ('hybrid', 'rule', 'off')
+MODE_OPTIONS = ('rule', 'off')
+PLANNER_MODES = ('lite', 'example_only')
+RESPONSE_OUTPUT_MODES = ('dual', 'json', 'legacy_marker')
 TTS_PROVIDERS = ('bailian_cosyvoice', 'windows_sapi', 'off')
 STT_PROVIDERS = ('windows_speech', 'off')
 BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
@@ -195,6 +197,17 @@ class DataManagerDialog(QDialog):
         export = QPushButton('Export debug JSON')
         export.clicked.connect(self.export_debug)
         layout.addWidget(export)
+        summarize = QPushButton('Summarize recent memory')
+        summarize.clicked.connect(self.owner.summarize_memory_requested.emit)
+        layout.addWidget(summarize)
+        data_row = QHBoxLayout()
+        export_data = QPushButton('Export user data')
+        import_data = QPushButton('Import user data')
+        export_data.clicked.connect(self.export_user_data)
+        import_data.clicked.connect(self.import_user_data)
+        data_row.addWidget(export_data)
+        data_row.addWidget(import_data)
+        layout.addLayout(data_row)
         self.tabs.addTab(tab, 'Debug')
 
     def render(self, snapshot: dict[str, Any]) -> None:
@@ -237,9 +250,12 @@ class DataManagerDialog(QDialog):
             'counts': {
                 'memories': len(snapshot.get('memories') or []),
                 'facts': len(snapshot.get('facts') or []),
+                'summaries': len(snapshot.get('summaries') or []),
                 'events': len(snapshot.get('events') or []),
             },
+            'token_usage': snapshot.get('token_usage', {}),
             'recent_events': snapshot.get('events', [])[:8],
+            'recent_summaries': snapshot.get('summaries', [])[:5],
         }
         self.debug_view.setPlainText(json.dumps(public_snapshot, ensure_ascii=False, indent=2, default=str))
 
@@ -284,6 +300,18 @@ class DataManagerDialog(QDialog):
         if path:
             self.owner.debug_export_requested.emit(path)
 
+    def export_user_data(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, 'Export user data', 'maica_user_data.zip', 'ZIP (*.zip)')
+        if path:
+            self.owner.user_data_export_requested.emit(path)
+
+    def import_user_data(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, 'Import user data', '', 'ZIP (*.zip)')
+        if not path:
+            return
+        if QMessageBox.question(self, 'Import user data', 'Import and append this user data? A backup will be created first.') == QMessageBox.StandardButton.Yes:
+            self.owner.user_data_import_requested.emit(path, False)
+
 
 class SettingsDialog(QDialog):
     def __init__(self, owner: 'MainWindow') -> None:
@@ -311,6 +339,28 @@ class SettingsDialog(QDialog):
         self.top_p.setDecimals(2)
         self.max_tokens = QSpinBox()
         self.max_tokens.setRange(64, 8192)
+        self.frequency_penalty = QDoubleSpinBox()
+        self.frequency_penalty.setRange(-2.0, 2.0)
+        self.frequency_penalty.setSingleStep(0.01)
+        self.frequency_penalty.setDecimals(2)
+        self.presence_penalty = QDoubleSpinBox()
+        self.presence_penalty.setRange(-2.0, 2.0)
+        self.presence_penalty.setSingleStep(0.01)
+        self.presence_penalty.setDecimals(2)
+        self.streaming_enabled = QCheckBox('Enable streaming when supported')
+        self.response_output_mode = QComboBox()
+        self.response_output_mode.addItems(RESPONSE_OUTPUT_MODES)
+        self.metadata_extract_enabled = QCheckBox('Extract emotion/action metadata with a second light call')
+        self.response_planner_mode = QComboBox()
+        self.response_planner_mode.addItems(PLANNER_MODES)
+        self.example_bank_limit = QSpinBox()
+        self.example_bank_limit.setRange(0, 5)
+        self.example_bank_min_score = QDoubleSpinBox()
+        self.example_bank_min_score.setRange(0, 500)
+        self.example_bank_min_score.setSingleStep(5)
+        self.example_bank_weight = QDoubleSpinBox()
+        self.example_bank_weight.setRange(0.0, 2.0)
+        self.example_bank_weight.setSingleStep(0.05)
         self.mfocus_mode = QComboBox()
         self.mfocus_mode.addItems(MODE_OPTIONS)
         self.mtrigger_mode = QComboBox()
@@ -325,6 +375,13 @@ class SettingsDialog(QDialog):
         self.embedding_service_port.setRange(1024, 65535)
         self.gui_background_mode = QComboBox()
         self.gui_background_mode.addItems(BACKGROUND_MODES)
+        self.gui_idle_spire_enabled = QCheckBox('Enable idle proactive talk')
+        self.gui_idle_spire_minutes = QSpinBox()
+        self.gui_idle_spire_minutes.setRange(1, 240)
+        self.gui_startup_greeting_enabled = QCheckBox('Show startup greeting')
+        self.auto_memory_summary_enabled = QCheckBox('Enable automatic memory summaries')
+        self.auto_memory_summary_turns = QSpinBox()
+        self.auto_memory_summary_turns.setRange(4, 200)
 
         self.tts_enabled = QCheckBox('Enable TTS by default')
         self.tts_provider = QComboBox()
@@ -347,6 +404,15 @@ class SettingsDialog(QDialog):
         form.addRow('Temperature', self.temperature)
         form.addRow('Top P', self.top_p)
         form.addRow('Max tokens', self.max_tokens)
+        form.addRow('Frequency penalty', self.frequency_penalty)
+        form.addRow('Presence penalty', self.presence_penalty)
+        form.addRow('', self.streaming_enabled)
+        form.addRow('Response output', self.response_output_mode)
+        form.addRow('', self.metadata_extract_enabled)
+        form.addRow('Planner mode', self.response_planner_mode)
+        form.addRow('Example limit', self.example_bank_limit)
+        form.addRow('Example min score', self.example_bank_min_score)
+        form.addRow('Example weight', self.example_bank_weight)
         form.addRow('MFocus mode', self.mfocus_mode)
         form.addRow('MTrigger mode', self.mtrigger_mode)
         form.addRow('', self.show_debug)
@@ -357,6 +423,11 @@ class SettingsDialog(QDialog):
         form.addRow('Embedding service port', self.embedding_service_port)
         form.addRow('', self.gui_disable_thread_embeddings)
         form.addRow('Background mode', self.gui_background_mode)
+        form.addRow('', self.gui_idle_spire_enabled)
+        form.addRow('Idle minutes', self.gui_idle_spire_minutes)
+        form.addRow('', self.gui_startup_greeting_enabled)
+        form.addRow('', self.auto_memory_summary_enabled)
+        form.addRow('Summary turns', self.auto_memory_summary_turns)
         form.addRow('', self.tts_enabled)
         form.addRow('TTS provider', self.tts_provider)
         form.addRow('Bailian model', self.tts_model)
@@ -389,8 +460,17 @@ class SettingsDialog(QDialog):
         self.temperature.setValue(float(config.get('temperature') or 0.22))
         self.top_p.setValue(float(config.get('top_p') or 0.7))
         self.max_tokens.setValue(int(config.get('max_tokens') or 900))
-        self._set_combo(self.mfocus_mode, str(config.get('mfocus_mode') or 'hybrid'))
-        self._set_combo(self.mtrigger_mode, str(config.get('mtrigger_mode') or 'hybrid'))
+        self.frequency_penalty.setValue(float(config.get('frequency_penalty') or 0.0))
+        self.presence_penalty.setValue(float(config.get('presence_penalty') or 0.0))
+        self.streaming_enabled.setChecked(bool(config.get('streaming_enabled', False)))
+        self._set_combo(self.response_output_mode, str(config.get('response_output_mode') or 'dual'))
+        self.metadata_extract_enabled.setChecked(bool(config.get('metadata_extract_enabled', True)))
+        self._set_combo(self.response_planner_mode, str(config.get('response_planner_mode') or 'lite'))
+        self.example_bank_limit.setValue(int(config.get('example_bank_limit') or 3))
+        self.example_bank_min_score.setValue(float(config.get('example_bank_min_score') or 150))
+        self.example_bank_weight.setValue(float(config.get('example_bank_weight') or 0.65))
+        self._set_combo(self.mfocus_mode, str(config.get('mfocus_mode') or 'rule'))
+        self._set_combo(self.mtrigger_mode, str(config.get('mtrigger_mode') or 'rule'))
         self.show_debug.setChecked(bool(config.get('show_debug', True)))
         self.embedding_enabled.setChecked(bool(config.get('embedding_enabled', False)))
         self.memory_embedding_enabled.setChecked(bool(config.get('memory_embedding_enabled', False)))
@@ -399,6 +479,11 @@ class SettingsDialog(QDialog):
         self.embedding_service_port.setValue(int(config.get('embedding_service_port') or 8766))
         self.gui_disable_thread_embeddings.setChecked(bool(config.get('gui_disable_thread_embeddings', True)))
         self._set_combo(self.gui_background_mode, str(config.get('gui_background_mode') or 'auto'))
+        self.gui_idle_spire_enabled.setChecked(bool(config.get('gui_idle_spire_enabled', False)))
+        self.gui_idle_spire_minutes.setValue(int(config.get('gui_idle_spire_minutes') or 12))
+        self.gui_startup_greeting_enabled.setChecked(bool(config.get('gui_startup_greeting_enabled', True)))
+        self.auto_memory_summary_enabled.setChecked(bool(config.get('auto_memory_summary_enabled', False)))
+        self.auto_memory_summary_turns.setValue(int(config.get('auto_memory_summary_turns') or 24))
         self.tts_enabled.setChecked(bool(config.get('tts_enabled', False)))
         self._set_combo(self.tts_provider, str(config.get('tts_provider') or 'windows_sapi'))
         self.tts_model.setText(str(config.get('tts_bailian_model') or ''))
@@ -424,6 +509,15 @@ class SettingsDialog(QDialog):
             'temperature': self.temperature.value(),
             'top_p': self.top_p.value(),
             'max_tokens': self.max_tokens.value(),
+            'frequency_penalty': self.frequency_penalty.value(),
+            'presence_penalty': self.presence_penalty.value(),
+            'streaming_enabled': self.streaming_enabled.isChecked(),
+            'response_output_mode': self.response_output_mode.currentText(),
+            'metadata_extract_enabled': self.metadata_extract_enabled.isChecked(),
+            'response_planner_mode': self.response_planner_mode.currentText(),
+            'example_bank_limit': self.example_bank_limit.value(),
+            'example_bank_min_score': self.example_bank_min_score.value(),
+            'example_bank_weight': self.example_bank_weight.value(),
             'mfocus_mode': self.mfocus_mode.currentText(),
             'mtrigger_mode': self.mtrigger_mode.currentText(),
             'show_debug': self.show_debug.isChecked(),
@@ -434,6 +528,11 @@ class SettingsDialog(QDialog):
             'embedding_service_port': self.embedding_service_port.value(),
             'gui_disable_thread_embeddings': self.gui_disable_thread_embeddings.isChecked(),
             'gui_background_mode': self.gui_background_mode.currentText(),
+            'gui_idle_spire_enabled': self.gui_idle_spire_enabled.isChecked(),
+            'gui_idle_spire_minutes': self.gui_idle_spire_minutes.value(),
+            'gui_startup_greeting_enabled': self.gui_startup_greeting_enabled.isChecked(),
+            'auto_memory_summary_enabled': self.auto_memory_summary_enabled.isChecked(),
+            'auto_memory_summary_turns': self.auto_memory_summary_turns.value(),
             'tts_enabled': self.tts_enabled.isChecked(),
             'tts_provider': self.tts_provider.currentText(),
             'tts_bailian_model': self.tts_model.text().strip(),
@@ -484,6 +583,9 @@ class MainWindow(QMainWindow):
     fact_add_requested = Signal(str, str, int)
     fact_delete_requested = Signal(int)
     debug_export_requested = Signal(str)
+    user_data_export_requested = Signal(str)
+    user_data_import_requested = Signal(str, bool)
+    summarize_memory_requested = Signal()
     config_save_requested = Signal(dict)
     stt_finished = Signal(dict)
 
@@ -510,6 +612,11 @@ class MainWindow(QMainWindow):
         self.data_dialog: DataManagerDialog | None = None
         self.settings_dialog: SettingsDialog | None = None
         self.current_config: dict[str, Any] = {}
+        self.last_user_activity = dt.datetime.now()
+        self.idle_spire_sent = False
+        self.idle_timer = QTimer(self)
+        self.idle_timer.setInterval(30_000)
+        self.idle_timer.timeout.connect(self.check_idle_spire)
 
         suffix = ' · SAFE TEST DB' if self.safe_test_mode else ''
         self.setWindowTitle(f'MAICA GUI v{APP_VERSION}{suffix}')
@@ -522,6 +629,7 @@ class MainWindow(QMainWindow):
         if self.safe_test_mode:
             self.add_system_message('Safe test DB mode is active. Real memories/profile are not being modified.')
         self.thread.start()
+        self.idle_timer.start()
 
     def _connect_worker(self) -> None:
         self.thread.started.connect(self.worker.initialize)
@@ -540,6 +648,9 @@ class MainWindow(QMainWindow):
         self.fact_add_requested.connect(self.worker.add_fact)
         self.fact_delete_requested.connect(self.worker.delete_fact)
         self.debug_export_requested.connect(self.worker.export_debug)
+        self.user_data_export_requested.connect(self.worker.export_user_data)
+        self.user_data_import_requested.connect(self.worker.import_user_data)
+        self.summarize_memory_requested.connect(self.worker.summarize_memory)
         self.config_save_requested.connect(self.worker.save_config)
         self.stt_finished.connect(self._handle_stt_finished)
 
@@ -586,6 +697,7 @@ class MainWindow(QMainWindow):
         self.chat_view = QTextBrowser()
         self.chat_view.setObjectName('chatView')
         self.chat_view.setOpenExternalLinks(False)
+        self.chat_view.document().setDefaultStyleSheet(CHAT_HTML_STYLE)
         right_layout.addWidget(self.chat_view, 1)
 
         self.input_box = QTextEdit()
@@ -621,12 +733,15 @@ class MainWindow(QMainWindow):
         button_row.addWidget(self.tts_button)
         button_row.addWidget(self.stop_tts_button)
         button_row.addWidget(self.listen_button)
-        button_row.addWidget(self.data_button)
-        button_row.addWidget(self.settings_button)
-        button_row.addWidget(self.diagnostics_button)
-        button_row.addWidget(self.debug_button)
-        button_row.addWidget(self.clear_button)
         right_layout.addLayout(button_row)
+
+        button_row2 = QHBoxLayout()
+        button_row2.addWidget(self.data_button)
+        button_row2.addWidget(self.settings_button)
+        button_row2.addWidget(self.diagnostics_button)
+        button_row2.addWidget(self.debug_button)
+        button_row2.addWidget(self.clear_button)
+        right_layout.addLayout(button_row2)
 
         self.debug_panel = QPlainTextEdit()
         self.debug_panel.setObjectName('debugPanel')
@@ -651,12 +766,13 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event: Any) -> None:
         self.tts.stop()
+        self.idle_timer.stop()
         self.shutdown_requested.emit()
         self.thread.quit()
-        if not self.thread.wait(30000):
-            event.ignore()
-            self.add_system_message('The backend is still shutting down. Please try closing again in a few seconds.')
-            return
+        if not self.thread.wait(5000):
+            self.add_system_message('Backend shutdown timed out; forcing GUI thread cleanup.')
+            self.thread.terminate()
+            self.thread.wait(2000)
         super().closeEvent(event)
 
     def add_system_message(self, text: str) -> None:
@@ -716,6 +832,8 @@ class MainWindow(QMainWindow):
         text = self.input_box.toPlainText().strip()
         if not text:
             return
+        self.last_user_activity = dt.datetime.now()
+        self.idle_spire_sent = False
         self.input_box.clear()
         self.add_user_message(text)
         self.set_busy(True)
@@ -723,6 +841,8 @@ class MainWindow(QMainWindow):
 
     def send_spire(self) -> None:
         hint = self.input_box.toPlainText().strip()
+        self.last_user_activity = dt.datetime.now()
+        self.idle_spire_sent = False
         self.input_box.clear()
         self.add_system_message('/spire is generating a proactive topic...')
         self.set_busy(True)
@@ -746,6 +866,8 @@ class MainWindow(QMainWindow):
         self.add_system_message(f'TTS provider: {provider} · {"on" if self.tts_enabled else "off"}')
         if self.settings_dialog is not None:
             self.settings_dialog.render(self.current_config)
+        if config.get('gui_startup_greeting_enabled', True):
+            self.add_system_message('Monika is awake. Recent history will be loaded if available.')
 
     def toggle_tts(self) -> None:
         self.tts_enabled = not self.tts_enabled
@@ -862,12 +984,14 @@ class MainWindow(QMainWindow):
             self.tts_enabled = bool(self.current_config.get('tts_enabled', False))
             self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
             self.refresh_background()
-            self.add_system_message('Settings saved. Restart GUI if you changed core model/API options.')
+            self.add_system_message('Settings applied. New chat requests will use the updated options.')
             if self.settings_dialog is not None:
                 self.settings_dialog.render(self.current_config)
         if self.data_dialog is not None:
             self.data_dialog.render(payload)
         self.update_context_label(payload)
+        if payload.get('action') in {'snapshot', ''}:
+            self.load_recent_messages_once(payload)
 
     def update_context_label(self, payload: dict[str, Any]) -> None:
         status = payload.get('status') if isinstance(payload.get('status'), dict) else {}
@@ -891,6 +1015,7 @@ class MainWindow(QMainWindow):
 
     def _handle_result(self, result: dict[str, Any]) -> None:
         self.set_busy(False)
+        self.last_user_activity = dt.datetime.now()
         if not result.get('ok'):
             self.set_emotion('concerned')
             self.add_system_message(f'Request failed: {result.get("error", "unknown error")}')
@@ -909,6 +1034,36 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(6000, self.report_tts_error_if_any)
         for notice in result.get('mtrigger_notices') or []:
             self.chat_view.append(f'<div class="notice">{html_escape(str(notice))}</div>')
+
+    def load_recent_messages_once(self, payload: dict[str, Any]) -> None:
+        if getattr(self, '_recent_loaded', False):
+            return
+        self._recent_loaded = True
+        messages = payload.get('recent_messages') if isinstance(payload.get('recent_messages'), list) else []
+        if not messages:
+            return
+        self.add_system_message('Loaded recent conversation history.')
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get('role') or '')
+            content = str(message.get('content') or '')
+            if role == 'user':
+                self.add_user_message(content)
+            elif role == 'assistant':
+                self.add_monika_message(content, 'neutral')
+
+    def check_idle_spire(self) -> None:
+        if not self.current_config.get('gui_idle_spire_enabled', False):
+            return
+        if self.idle_spire_sent or not self.input_box.isEnabled() or self.input_box.toPlainText().strip():
+            return
+        minutes = int(self.current_config.get('gui_idle_spire_minutes') or 12)
+        if (dt.datetime.now() - self.last_user_activity).total_seconds() >= minutes * 60:
+            self.idle_spire_sent = True
+            self.add_system_message('Idle proactive talk is starting...')
+            self.set_busy(True)
+            self.spire_requested.emit('')
 
     def report_tts_error_if_any(self) -> None:
         error = str(getattr(self.tts, 'last_error', '') or '').strip()
@@ -974,8 +1129,8 @@ QPushButton {
     color: #fff8f4;
     border: none;
     border-radius: 12px;
-    padding: 10px 16px;
-    font-size: 15px;
+    padding: 8px 10px;
+    font-size: 14px;
 }
 QPushButton:hover {
     background: #a65f6d;
@@ -983,6 +1138,38 @@ QPushButton:hover {
 QPushButton:disabled {
     background: #6a6267;
     color: #d1c5c1;
+}
+"""
+
+CHAT_HTML_STYLE = """
+.system {
+    color: #5b6670;
+    margin: 8px 0;
+    font-size: 12px;
+}
+.user {
+    background: #eef4ff;
+    border-radius: 10px;
+    margin: 8px 0 8px 36px;
+    padding: 8px 10px;
+}
+.monika {
+    background: #fff6f0;
+    border-radius: 10px;
+    margin: 8px 36px 8px 0;
+    padding: 8px 10px;
+}
+.monika span {
+    color: #8f7a70;
+    font-size: 11px;
+}
+.notice {
+    color: #7a5c2d;
+    background: #fff5d8;
+    border-radius: 8px;
+    margin: 6px 0;
+    padding: 5px 8px;
+    font-size: 12px;
 }
 """
 

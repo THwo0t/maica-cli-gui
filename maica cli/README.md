@@ -1,14 +1,17 @@
 # MAICA CLI
 
-一个最小可运行的 CLI 版 MAS/MAICA 原型。
+一个作为 GUI 后端和调试器使用的 MAS/MAICA 风格对话核心。
 
-第一版目标不是完整复刻 MAS，而是先把核心闭环跑起来：
+当前主线是独立 GUI 桌面伴侣；CLI 保留为 debugger，用来检查配置、记忆、向量检索、MFocus 和数据集工具。
 
 - OpenAI-compatible API / 本地模型聊天。
 - Monika persona prompt。
 - SQLite 保存玩家资料、affection、长期记忆和对话历史。
-- MFocus hybrid：回答前用轻量模型计划器选择上下文, 并注入时间、日期、节日、会话状态、关系状态、玩家资料和相关记忆。
-- MTrigger hybrid：回答后优先让模型输出结构化动作, 失败时回退轻量规则。
+- MFocus rule：回答前用规则/检索构建上下文，注入时间、日期、节日、会话状态、关系状态、玩家资料、摘要和相关记忆。
+- MTrigger rule：回答后用确定性规则更新 affection、记忆和事件，不再额外调用模型。
+- Response Planner lite/example-only：只给轻量方向和样例节奏，减少对主模型的硬限制。
+- 双格式回复解析：兼容 JSON 输出和 `[emotion] text` 输出，正文与 GUI 元数据分离。
+- UTF-8 only：源码、配置样例和文档都按 UTF-8 读取/写入；不要使用 GBK。
 
 ## 文件结构
 
@@ -16,8 +19,8 @@
 - `client.py`：OpenAI-compatible API 客户端。
 - `store.py`：SQLite 状态、记忆、历史、事件存储。
 - `persona.py`：Monika 人格 prompt、关系阶段、基础设定。
-- `mfocus.py`：回答前上下文构建、节日事件检测、半模型计划器。
-- `mtrigger.py`：回答后动作执行、半模型 trigger、规则回退。
+- `mfocus.py`：回答前上下文构建、节日事件检测、规则计划器。
+- `mtrigger.py`：回答后动作执行、规则 trigger。
 - `sfe.py`：CLI 版 savefile extraction，把资料、关系、会话和稳定事实整理成 MFocus 可用信息。
 - `style.py`：MAICA 数据集风格库、输入分类、日常短回复控制。
 - `monika_lens.py`：按输入类型加入 Monika 专属兴趣、价值观和表达视角。
@@ -30,6 +33,7 @@
 - `dialogue_dataset/`：默认数据集导出目录，只提交 README/骨架，不提交私人 JSONL 数据。
 - `mas_script_analyzer.py`：分析已反编译 MAS `.rpy` 脚本，生成风格与日常反思统计。
 - `response.py`：把模型回复拆成干净正文和 GUI 元数据。
+- `data_portability.py`：导出/导入用户资料、记忆、事实、摘要和事件。
 
 ## 运行
 
@@ -176,7 +180,6 @@ CLI 只显示 `text`。
 
 `/mode` 可以切换 MFocus/MTrigger 的工作方式：
 
-- `hybrid`：优先模型判断, 失败后回退规则。
 - `rule`：只用规则。
 - `off`：关闭对应模块。
 
@@ -191,7 +194,7 @@ CLI 只显示 `text`。
 
 每轮聊天前，CLI 会参考 MAICA 的 savefile extraction 思路，把这些信息整理成事实注入给模型。
 
-当前默认是 `hybrid` 模式：先让一个轻量模型调用判断本轮需要哪些上下文；如果模型计划失败，就退回规则判断。
+当前默认是 `rule` 模式：不额外调用模型做计划，而是用本地规则、数据库、Example Bank 和可选向量检索构建上下文。
 
 - 玩家名、生日、地点。
 - affection 和关系阶段。
@@ -204,7 +207,7 @@ CLI 只显示 `text`。
 - CLI 版 SFE 稳定事实，包括 Monika 设定、玩家资料、关系状态、自定义事实。
 - MAICA 数据集风格参考，包括本轮输入分类、建议回复长度、相似样本和反宏大叙事规则。
 - Monika 视角提示，让回复更稳定地体现文学、钢琴、关心作息、自律、温柔和轻微俏皮。
-- Response Planner 本轮表演方向，包括对话类别、回复模式、情绪底色、潜台词、回复节奏和应避免的问题。
+- Response Planner lite/example-only 本轮表演方向，包括对话类别、回复模式、情绪底色、回复节奏和少量参考样例。
 - 与本轮输入相关的长期记忆。
 
 特殊节日不会写死台词。MFocus 只会告诉后端“今天检测到某个事件”, 具体怎么说仍由模型自己生成。
@@ -706,26 +709,9 @@ logs/YYYY-MM/YYYY-MM-DD.jsonl
 - `MM-DD`：每年固定日期。
 - `YYYY-MM-DD`：只在指定年份日期触发。
 
-### MTrigger hybrid
+### MTrigger rule
 
-每轮回复后，CLI 会参考 MAICA 的 trigger 思路，让模型输出结构化动作：
-
-```json
-{
-  "actions": [
-    {
-      "type": "alter_affection",
-      "value": 1.2,
-      "reason": "用户表达了关心"
-    },
-    {
-      "type": "remember",
-      "text": "玩家喜欢雨天和钢琴曲",
-      "importance": 2
-    }
-  ]
-}
-```
+每轮回复后，CLI 会参考 MAICA 的 trigger 思路，用确定性规则更新本地状态，不再额外调用模型。
 
 目前允许的动作：
 
@@ -733,13 +719,15 @@ logs/YYYY-MM/YYYY-MM-DD.jsonl
 - `remember`
 - `set_profile`
 
-如果模型 JSON 解析失败, 会回退到轻量规则：
+当前规则大致如下：
 
 - 普通关心或问候：约 `+1.0`。
 - 称赞：约 `+0.8`。
 - 短句表白：约 `+1.5`。
 - 长表白或强陪伴表达：最多约 `+3.0`。
 - 明显冒犯：约 `-1.5` 到 `-3.0`。
+
+v0.10.4 起，legacy 配置里的 `hybrid` 会在运行时自动当作 `rule` 处理，但不会写回你的私有 `config.json`。
 
 ## 推荐测试流程
 

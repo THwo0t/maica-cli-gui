@@ -264,7 +264,9 @@ def build_vector_index(config: dict[str, Any]) -> dict[str, Any]:
     with meta_path.open("w", encoding="utf-8") as handle:
         for item in examples:
             handle.write(json.dumps(item, ensure_ascii=False) + "\n")
-    _INDEX_CACHE.clear()
+    stale_keys = [key for key in _INDEX_CACHE if key[0] == str(index_path) and key[1] == str(meta_path)]
+    for key in stale_keys:
+        _INDEX_CACHE.pop(key, None)
     return {
         "built": True,
         "count": len(examples),
@@ -301,7 +303,9 @@ def _load_index(config: dict[str, Any]) -> tuple[Any, list[dict[str, Any]]]:
                     continue
                 if isinstance(item, dict):
                     rows.append(item)
-        _INDEX_CACHE.clear()
+        stale_keys = [key for key in _INDEX_CACHE if key[0] == str(index_path) and key[1] == str(meta_path)]
+        for key in stale_keys:
+            _INDEX_CACHE.pop(key, None)
         _INDEX_CACHE[cache_key] = (index, rows)
     return _INDEX_CACHE[cache_key]
 
@@ -332,7 +336,9 @@ def _load_index_from_paths(index_path: Path, meta_path: Path) -> tuple[Any, list
                     continue
                 if isinstance(item, dict):
                     rows.append(item)
-        _INDEX_CACHE.clear()
+        stale_keys = [key for key in _INDEX_CACHE if key[0] == str(index_path) and key[1] == str(meta_path)]
+        for key in stale_keys:
+            _INDEX_CACHE.pop(key, None)
         _INDEX_CACHE[cache_key] = (index, rows)
     return _INDEX_CACHE[cache_key]
 
@@ -440,7 +446,9 @@ def build_memory_vector_index(store: Any, config: dict[str, Any]) -> dict[str, A
             item = dict(item)
             item["retrieval_text"] = build_memory_retrieval_text(item)
             handle.write(json.dumps(item, ensure_ascii=False) + "\n")
-    _INDEX_CACHE.clear()
+    stale_keys = [key for key in _INDEX_CACHE if key[0] == str(index_path) and key[1] == str(meta_path)]
+    for key in stale_keys:
+        _INDEX_CACHE.pop(key, None)
     return {
         "built": True,
         "count": len(memories),

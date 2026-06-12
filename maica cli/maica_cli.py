@@ -51,8 +51,8 @@ Commands:
   /config                       Show current model config.
   /config set <key> <value>     Update config.json.
   /mode                         Show MFocus/MTrigger modes.
-  /mode mfocus hybrid|rule|off  Set MFocus mode.
-  /mode mtrigger hybrid|rule|off Set MTrigger mode.
+  /mode mfocus rule|off         Set MFocus mode.
+  /mode mtrigger rule|off       Set MTrigger mode.
   /debug on|off                 Toggle debug output.
   /logs on|off                  Toggle JSONL logs.
   /db reset <password>          Clear local user database after password check.
@@ -416,7 +416,7 @@ def handle_command(
             print(json.dumps(safe, ensure_ascii=False, indent=2))
         return True
     if name == "/mode":
-        valid = {"hybrid", "rule", "off"}
+        valid = {"rule", "off"}
         if len(parts) == 1:
             print(
                 json.dumps(
@@ -430,7 +430,7 @@ def handle_command(
             )
             return True
         if len(parts) != 3 or parts[1] not in {"mfocus", "mtrigger"} or parts[2] not in valid:
-            print("[mode] Usage: /mode mfocus hybrid|rule|off OR /mode mtrigger hybrid|rule|off")
+            print("[mode] Usage: /mode mfocus rule|off OR /mode mtrigger rule|off")
             return True
         key = "mfocus_mode" if parts[1] == "mfocus" else "mtrigger_mode"
         config[key] = parts[2]
@@ -935,7 +935,7 @@ def handle_command(
 def repl(config: dict[str, Any], store: Store) -> None:
     engine = MaicaEngine(config=config, store=store, app_dir=APP_DIR)
     client = engine.client
-    print("MAICA CLI Debugger v0.9.8")
+    print("MAICA CLI Debugger v0.10.4")
     print("Type /help for debug commands, /exit to quit. Use maica gui/gui_app.py for the GUI.")
     print()
 

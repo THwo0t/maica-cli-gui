@@ -1,4 +1,4 @@
-# MAICA GUI v0.9.8
+# MAICA GUI v0.10.4
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -71,6 +71,12 @@ assets.
 - Auto/day/night/rain background selection from the runtime asset manifest.
 - STT MVP through Windows Speech Recognition with a `Listen` button.
 - Optional out-of-process embedding service for GUI vector/RAG retrieval.
+- Lite/example-only response planner modes with dual response parsing.
+- Rule-only MTrigger for predictable local state updates.
+- Manual user-data export/import for portable backups.
+- Optional idle `/spire` proactive greeting.
+- Automatic lightweight memory summaries.
+- UTF-8 source/config validation in smoke tests.
 
 ## TTS
 
@@ -165,6 +171,8 @@ Current scope:
 - View and edit profile fields: `player_name`, `birthday`, `location`, `nicknames`, `affection`.
 - Add and delete memories.
 - Add and delete facts.
+- Summarize recent chat into long-term memory notes.
+- Export and import user data packages.
 - View a compact status/debug summary.
 - Export a local debug JSON snapshot with secret-like config values hidden.
 
@@ -178,14 +186,22 @@ Use the `Settings` button to edit common non-secret options:
 - API base and model name.
 - Output language.
 - Temperature, top-p, and max tokens.
-- MFocus/MTrigger mode.
+- Frequency and presence penalties.
+- Streaming toggle for compatible API providers.
+- MFocus/MTrigger mode. MTrigger is rule-only in this branch.
+- Response output mode and metadata extraction.
+- Lite/example-only response planner mode.
+- Example Bank retrieval limits, score threshold, and prompt weight.
 - TTS provider and Bailian voice/model/format/instruction.
 - Example Bank vectors, memory vectors, and external embedding service.
 - Background mode: auto, day, night, or rain.
+- Idle proactive `/spire`, startup greeting, automatic summaries, and hidden token stats.
 - GUI thread embedding safety toggle.
 
-Secrets such as API keys are intentionally not displayed in the GUI settings
-dialog. Keep editing those only in the ignored local `maica cli/config.json`.
+Settings are applied to the persistent backend immediately after saving. New
+chat requests use the updated options without restarting the GUI. Secrets such
+as API keys are intentionally not displayed in the GUI settings dialog. Keep
+editing those only in the ignored local `maica cli/config.json`.
 
 ## Runtime Context
 

@@ -1,37 +1,41 @@
 # -*- coding: utf-8 -*-
-"""SQLite-backed local state for MAICA CLI."""
+"""SQLite-backed local state for MAICA CLI/GUI."""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
-import re
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 from persona import relationship_stage
+from text_utils import split_query_tokens
 
+
+SCHEMA_VERSION = 2
 
 PROFILE_DEFAULTS = {
-    "player_name": "player",
-    "birthday": "",
-    "location": "",
-    "nicknames": "[]",
-    "affection": "200",
-    "relationship_stage": "亲密的情侣关系",
-    "first_seen": "",
-    "last_seen": "",
-    "last_session_start": "",
-    "session_count": "0",
-    "total_chat_turns": "0",
+    'player_name': 'player',
+    'birthday': '',
+    'location': '',
+    'nicknames': '[]',
+    'affection': '200',
+    'relationship_stage': 'familiar lovers',
+    'first_seen': '',
+    'last_seen': '',
+    'last_session_start': '',
+    'session_count': '0',
+    'total_chat_turns': '0',
 }
 
 
 class Store:
     def __init__(self, path: Path):
-        self.path = path
-        self.conn = sqlite3.connect(path)
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.ensure_schema()
 
@@ -72,39 +76,60 @@ class Store:
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS summaries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                kind TEXT DEFAULT 'session',
+                text TEXT NOT NULL,
+                source_start_id INTEGER DEFAULT 0,
+                source_end_id INTEGER DEFAULT 0,
+                importance INTEGER DEFAULT 2,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source TEXT NOT NULL,
+                model TEXT DEFAULT '',
+                prompt_tokens INTEGER DEFAULT 0,
+                completion_tokens INTEGER DEFAULT 0,
+                total_tokens INTEGER DEFAULT 0,
+                estimated_cost REAL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
             """
         )
         for key, value in PROFILE_DEFAULTS.items():
             self.conn.execute(
-                "INSERT OR IGNORE INTO profile(key, value) VALUES (?, ?)",
+                'INSERT OR IGNORE INTO profile(key, value) VALUES (?, ?)',
                 (key, value),
             )
+        self.conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
         self.conn.commit()
 
     def close(self) -> None:
         self.conn.close()
 
     def now(self) -> str:
-        return dt.datetime.now().isoformat(timespec="seconds")
+        return dt.datetime.now().isoformat(timespec='seconds')
 
     def get_profile(self) -> dict[str, str]:
-        rows = self.conn.execute("SELECT key, value FROM profile ORDER BY key").fetchall()
-        return {row["key"]: row["value"] for row in rows}
+        rows = self.conn.execute('SELECT key, value FROM profile ORDER BY key').fetchall()
+        return {row['key']: row['value'] for row in rows}
 
-    def get_profile_value(self, key: str, default: str = "") -> str:
-        row = self.conn.execute("SELECT value FROM profile WHERE key = ?", (key,)).fetchone()
-        return row["value"] if row else default
+    def get_profile_value(self, key: str, default: str = '') -> str:
+        row = self.conn.execute('SELECT value FROM profile WHERE key = ?', (key,)).fetchone()
+        return row['value'] if row else default
 
     def set_profile_value(self, key: str, value: str) -> None:
         self.conn.execute(
-            "INSERT INTO profile(key, value) VALUES (?, ?) "
-            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            'INSERT INTO profile(key, value) VALUES (?, ?) '
+            'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
             (key, value),
         )
         self.conn.commit()
 
     def get_nicknames(self) -> list[str]:
-        raw = self.get_profile_value("nicknames", "[]")
+        raw = self.get_profile_value('nicknames', '[]')
         try:
             data = json.loads(raw)
         except json.JSONDecodeError:
@@ -124,8 +149,8 @@ class Store:
             nickname = str(item).strip()
             if nickname and nickname not in cleaned:
                 cleaned.append(nickname)
-        self.set_profile_value("nicknames", json.dumps(cleaned, ensure_ascii=False))
-        self.add_event("nicknames_updated", {"nicknames": cleaned})
+        self.set_profile_value('nicknames', json.dumps(cleaned, ensure_ascii=False))
+        self.add_event('nicknames_updated', {'nicknames': cleaned})
         return cleaned
 
     def add_nickname(self, nickname: str) -> list[str]:
@@ -137,8 +162,7 @@ class Store:
 
     def remove_nickname(self, nickname: str) -> bool:
         nicknames = self.get_nicknames()
-        nickname = nickname.strip()
-        updated = [item for item in nicknames if item != nickname]
+        updated = [item for item in nicknames if item != nickname.strip()]
         if len(updated) == len(nicknames):
             return False
         self.set_nicknames(updated)
@@ -146,16 +170,16 @@ class Store:
 
     def begin_session(self) -> None:
         now = self.now()
-        if not self.get_profile_value("first_seen"):
-            self.set_profile_value("first_seen", now)
-        self.set_profile_value("last_session_start", now)
-        self.set_profile_value("session_count", str(self.int_profile_value("session_count") + 1))
-        self.add_event("session_start", {"at": now})
+        if not self.get_profile_value('first_seen'):
+            self.set_profile_value('first_seen', now)
+        self.set_profile_value('last_session_start', now)
+        self.set_profile_value('session_count', str(self.int_profile_value('session_count') + 1))
+        self.add_event('session_start', {'at': now})
 
     def end_session(self) -> None:
         now = self.now()
-        self.set_profile_value("last_seen", now)
-        self.add_event("session_end", {"at": now})
+        self.set_profile_value('last_seen', now)
+        self.add_event('session_end', {'at': now})
 
     def int_profile_value(self, key: str, default: int = 0) -> int:
         try:
@@ -164,222 +188,246 @@ class Store:
             return default
 
     def increment_chat_turns(self) -> int:
-        turns = self.int_profile_value("total_chat_turns") + 1
-        self.set_profile_value("total_chat_turns", str(turns))
+        turns = self.int_profile_value('total_chat_turns') + 1
+        self.set_profile_value('total_chat_turns', str(turns))
         return turns
 
     def affection(self) -> float:
         try:
-            return float(self.get_profile_value("affection", "200"))
+            return float(self.get_profile_value('affection', '200'))
         except ValueError:
             return 200.0
 
-    def set_affection(self, value: float) -> float:
-        value = max(-100.0, min(10_000.0, value))
-        self.set_profile_value("affection", f"{value:.2f}".rstrip("0").rstrip("."))
-        self.set_profile_value("relationship_stage", relationship_stage(value))
-        self.add_event("affection", {"value": value})
+    def set_affection(self, value: float, minimum: float = -100.0, maximum: float = 10_000.0) -> float:
+        value = max(float(minimum), min(float(maximum), float(value)))
+        self.set_profile_value('affection', f'{value:.2f}'.rstrip('0').rstrip('.'))
+        self.set_profile_value('relationship_stage', relationship_stage(value))
+        self.add_event('affection', {'value': value})
         return value
 
-    def add_memory(self, text: str, tags: str = "", importance: int = 1) -> int:
+    def add_memory(self, text: str, tags: str = '', importance: int = 1) -> int:
         now = self.now()
         cur = self.conn.execute(
-            "INSERT INTO memories(text, tags, importance, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+            'INSERT INTO memories(text, tags, importance, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
             (text.strip(), tags, int(importance), now, now),
         )
         self.conn.commit()
         return int(cur.lastrowid)
 
-    def search_memories(self, query: str = "", limit: int = 8) -> list[sqlite3.Row]:
+    def _score_rows(self, rows: list[sqlite3.Row], query: str, fields: tuple[str, ...], limit: int) -> list[sqlite3.Row]:
+        tokens = split_query_tokens(query) or [query.lower()]
+        scored = []
+        for row in rows:
+            haystack = ' '.join(str(row[field] or '') for field in fields).lower()
+            score = sum(2 for token in tokens if token in haystack) + int(row['importance'])
+            if score > int(row['importance']):
+                scored.append((score, row))
+        scored.sort(key=lambda item: (item[0], item[1]['updated_at']), reverse=True)
+        return [row for _, row in scored[:limit]]
+
+    def search_memories(self, query: str = '', limit: int = 8) -> list[sqlite3.Row]:
         query = query.strip()
         if not query:
             return self.conn.execute(
-                "SELECT * FROM memories ORDER BY importance DESC, updated_at DESC LIMIT ?",
+                'SELECT * FROM memories ORDER BY importance DESC, updated_at DESC LIMIT ?',
                 (limit,),
             ).fetchall()
-
-        tokens = [token for token in re.findall(r"[\w\u4e00-\u9fff]{2,}", query.lower()) if token]
-        if not tokens:
-            tokens = [query.lower()]
-
-        rows = self.conn.execute("SELECT * FROM memories").fetchall()
-        scored = []
-        for row in rows:
-            haystack = (row["text"] + " " + row["tags"]).lower()
-            score = sum(2 for token in tokens if token in haystack) + int(row["importance"])
-            if score > int(row["importance"]):
-                scored.append((score, row))
-        scored.sort(key=lambda item: (item[0], item[1]["updated_at"]), reverse=True)
-        return [row for _, row in scored[:limit]]
+        return self._score_rows(self.conn.execute('SELECT * FROM memories').fetchall(), query, ('text', 'tags'), limit)
 
     def all_memories(self) -> list[sqlite3.Row]:
-        return self.conn.execute(
-            "SELECT * FROM memories ORDER BY id ASC"
-        ).fetchall()
+        return self.conn.execute('SELECT * FROM memories ORDER BY id ASC').fetchall()
 
     def delete_memory(self, memory_id: int) -> bool:
-        cur = self.conn.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        cur = self.conn.execute('DELETE FROM memories WHERE id = ?', (memory_id,))
         self.conn.commit()
         deleted = cur.rowcount > 0
         if deleted:
-            self.add_event("memory_deleted", {"memory_id": memory_id})
+            self.add_event('memory_deleted', {'memory_id': memory_id})
         return deleted
 
     def update_memory_text(self, memory_id: int, text: str) -> bool:
         cur = self.conn.execute(
-            "UPDATE memories SET text = ?, updated_at = ? WHERE id = ?",
+            'UPDATE memories SET text = ?, updated_at = ? WHERE id = ?',
             (text.strip(), self.now(), memory_id),
         )
         self.conn.commit()
         updated = cur.rowcount > 0
         if updated:
-            self.add_event("memory_edited", {"memory_id": memory_id})
+            self.add_event('memory_edited', {'memory_id': memory_id})
         return updated
 
     def update_memory_tags(self, memory_id: int, tags: str) -> bool:
         cur = self.conn.execute(
-            "UPDATE memories SET tags = ?, updated_at = ? WHERE id = ?",
+            'UPDATE memories SET tags = ?, updated_at = ? WHERE id = ?',
             (tags.strip(), self.now(), memory_id),
         )
         self.conn.commit()
         updated = cur.rowcount > 0
         if updated:
-            self.add_event("memory_tags_updated", {"memory_id": memory_id, "tags": tags})
+            self.add_event('memory_tags_updated', {'memory_id': memory_id, 'tags': tags})
         return updated
 
     def update_memory_importance(self, memory_id: int, importance: int) -> bool:
         importance = max(1, min(5, int(importance)))
         cur = self.conn.execute(
-            "UPDATE memories SET importance = ?, updated_at = ? WHERE id = ?",
+            'UPDATE memories SET importance = ?, updated_at = ? WHERE id = ?',
             (importance, self.now(), memory_id),
         )
         self.conn.commit()
         updated = cur.rowcount > 0
         if updated:
-            self.add_event("memory_importance_updated", {"memory_id": memory_id, "importance": importance})
+            self.add_event('memory_importance_updated', {'memory_id': memory_id, 'importance': importance})
         return updated
 
     def clear_memories(self) -> int:
-        cur = self.conn.execute("DELETE FROM memories")
+        cur = self.conn.execute('DELETE FROM memories')
         self.conn.execute("DELETE FROM sqlite_sequence WHERE name = 'memories'")
         self.conn.commit()
         deleted = cur.rowcount
-        self.add_event("memories_cleared", {"count": deleted})
+        self.add_event('memories_cleared', {'count': deleted})
         return deleted
 
-    def clear_facts(self) -> int:
-        cur = self.conn.execute("DELETE FROM facts")
-        self.conn.execute("DELETE FROM sqlite_sequence WHERE name = 'facts'")
-        self.conn.commit()
-        deleted = cur.rowcount
-        self.add_event("facts_cleared", {"count": deleted})
-        return deleted
-
-    def add_fact(
-        self,
-        text: str,
-        category: str = "custom",
-        source: str = "user",
-        importance: int = 2,
-    ) -> int:
+    def add_fact(self, text: str, category: str = 'custom', source: str = 'user', importance: int = 2) -> int:
         now = self.now()
         cur = self.conn.execute(
-            "INSERT INTO facts(category, text, source, importance, created_at, updated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (category.strip() or "custom", text.strip(), source.strip() or "user", int(importance), now, now),
+            'INSERT INTO facts(category, text, source, importance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+            (category.strip() or 'custom', text.strip(), source.strip() or 'user', int(importance), now, now),
         )
         self.conn.commit()
         fact_id = int(cur.lastrowid)
-        self.add_event("fact_added", {"fact_id": fact_id, "category": category})
+        self.add_event('fact_added', {'fact_id': fact_id, 'category': category})
         return fact_id
 
-    def search_facts(self, query: str = "", limit: int = 12) -> list[sqlite3.Row]:
+    def search_facts(self, query: str = '', limit: int = 12) -> list[sqlite3.Row]:
         query = query.strip()
         if not query:
             return self.conn.execute(
-                "SELECT * FROM facts ORDER BY importance DESC, updated_at DESC LIMIT ?",
+                'SELECT * FROM facts ORDER BY importance DESC, updated_at DESC LIMIT ?',
                 (limit,),
             ).fetchall()
-
-        tokens = []
-        for part in re.findall(r"[a-z0-9_]+|[\u4e00-\u9fff]+", query.lower()):
-            if re.fullmatch(r"[\u4e00-\u9fff]+", part):
-                tokens.extend(part[index : index + 2] for index in range(max(0, len(part) - 1)))
-            elif len(part) >= 2:
-                tokens.append(part)
-        if not tokens:
-            tokens = [query.lower()]
-
-        rows = self.conn.execute("SELECT * FROM facts").fetchall()
-        scored = []
-        for row in rows:
-            haystack = (row["text"] + " " + row["category"] + " " + row["source"]).lower()
-            score = sum(2 for token in tokens if token in haystack) + int(row["importance"])
-            if score > int(row["importance"]):
-                scored.append((score, row))
-        scored.sort(key=lambda item: (item[0], item[1]["updated_at"]), reverse=True)
-        return [row for _, row in scored[:limit]]
+        return self._score_rows(
+            self.conn.execute('SELECT * FROM facts').fetchall(),
+            query,
+            ('text', 'category', 'source'),
+            limit,
+        )
 
     def update_fact_text(self, fact_id: int, text: str) -> bool:
         cur = self.conn.execute(
-            "UPDATE facts SET text = ?, updated_at = ? WHERE id = ?",
+            'UPDATE facts SET text = ?, updated_at = ? WHERE id = ?',
             (text.strip(), self.now(), fact_id),
         )
         self.conn.commit()
         updated = cur.rowcount > 0
         if updated:
-            self.add_event("fact_edited", {"fact_id": fact_id})
+            self.add_event('fact_edited', {'fact_id': fact_id})
         return updated
 
     def delete_fact(self, fact_id: int) -> bool:
-        cur = self.conn.execute("DELETE FROM facts WHERE id = ?", (fact_id,))
+        cur = self.conn.execute('DELETE FROM facts WHERE id = ?', (fact_id,))
         self.conn.commit()
         deleted = cur.rowcount > 0
         if deleted:
-            self.add_event("fact_deleted", {"fact_id": fact_id})
+            self.add_event('fact_deleted', {'fact_id': fact_id})
+        return deleted
+
+    def clear_facts(self) -> int:
+        cur = self.conn.execute('DELETE FROM facts')
+        self.conn.execute("DELETE FROM sqlite_sequence WHERE name = 'facts'")
+        self.conn.commit()
+        deleted = cur.rowcount
+        self.add_event('facts_cleared', {'count': deleted})
         return deleted
 
     def add_message(self, role: str, content: str, session_id: int = 1) -> None:
         self.conn.execute(
-            "INSERT INTO messages(session_id, role, content, created_at) VALUES (?, ?, ?, ?)",
+            'INSERT INTO messages(session_id, role, content, created_at) VALUES (?, ?, ?, ?)',
             (session_id, role, content, self.now()),
         )
         self.conn.commit()
 
     def recent_messages(self, limit: int = 16, session_id: int = 1) -> list[dict[str, str]]:
         rows = self.conn.execute(
-            "SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?",
+            'SELECT role, content FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?',
             (session_id, limit),
         ).fetchall()
-        return [{"role": row["role"], "content": row["content"]} for row in reversed(rows)]
+        return [{'role': row['role'], 'content': row['content']} for row in reversed(rows)]
+
+    def recent_message_rows(self, limit: int = 40, session_id: int = 1) -> list[sqlite3.Row]:
+        rows = self.conn.execute(
+            'SELECT * FROM messages WHERE session_id = ? ORDER BY id DESC LIMIT ?',
+            (session_id, limit),
+        ).fetchall()
+        return list(reversed(rows))
 
     def clear_messages(self, session_id: int = 1) -> None:
-        self.conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        self.conn.execute('DELETE FROM messages WHERE session_id = ?', (session_id,))
         self.conn.commit()
 
     def clear_all_messages(self) -> int:
-        cur = self.conn.execute("DELETE FROM messages")
+        cur = self.conn.execute('DELETE FROM messages')
         self.conn.execute("DELETE FROM sqlite_sequence WHERE name = 'messages'")
         self.conn.commit()
         deleted = cur.rowcount
-        self.add_event("messages_cleared", {"count": deleted})
+        self.add_event('messages_cleared', {'count': deleted})
         return deleted
 
+    def add_summary(self, text: str, kind: str = 'session', source_start_id: int = 0, source_end_id: int = 0, importance: int = 2) -> int:
+        now = self.now()
+        cur = self.conn.execute(
+            'INSERT INTO summaries(kind, text, source_start_id, source_end_id, importance, created_at, updated_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (kind, text.strip(), int(source_start_id), int(source_end_id), int(importance), now, now),
+        )
+        self.conn.commit()
+        summary_id = int(cur.lastrowid)
+        self.add_event('summary_added', {'summary_id': summary_id, 'kind': kind})
+        return summary_id
+
+    def recent_summaries(self, limit: int = 12) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            'SELECT * FROM summaries ORDER BY importance DESC, updated_at DESC LIMIT ?',
+            (limit,),
+        ).fetchall()
+
+    def last_summary_source_end_id(self) -> int:
+        row = self.conn.execute('SELECT MAX(source_end_id) AS value FROM summaries').fetchone()
+        return int(row['value'] or 0)
+
+    def add_token_usage(self, source: str, model: str = '', prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0, estimated_cost: float = 0.0) -> int:
+        cur = self.conn.execute(
+            'INSERT INTO token_usage(source, model, prompt_tokens, completion_tokens, total_tokens, estimated_cost, created_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (source, model, int(prompt_tokens), int(completion_tokens), int(total_tokens), float(estimated_cost), self.now()),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    def token_usage_summary(self) -> dict[str, Any]:
+        row = self.conn.execute(
+            'SELECT COUNT(*) AS calls, SUM(prompt_tokens) AS prompt_tokens, SUM(completion_tokens) AS completion_tokens, '
+            'SUM(total_tokens) AS total_tokens, SUM(estimated_cost) AS estimated_cost FROM token_usage'
+        ).fetchone()
+        return {
+            'calls': int(row['calls'] or 0),
+            'prompt_tokens': int(row['prompt_tokens'] or 0),
+            'completion_tokens': int(row['completion_tokens'] or 0),
+            'total_tokens': int(row['total_tokens'] or 0),
+            'estimated_cost': float(row['estimated_cost'] or 0.0),
+        }
+
     def clear_events(self) -> int:
-        cur = self.conn.execute("DELETE FROM events")
+        cur = self.conn.execute('DELETE FROM events')
         self.conn.execute("DELETE FROM sqlite_sequence WHERE name = 'events'")
         self.conn.commit()
         return cur.rowcount
 
     def reset_profile(self) -> None:
-        self.conn.execute("DELETE FROM profile")
+        self.conn.execute('DELETE FROM profile')
         for key, value in PROFILE_DEFAULTS.items():
-            self.conn.execute(
-                "INSERT INTO profile(key, value) VALUES (?, ?)",
-                (key, value),
-            )
+            self.conn.execute('INSERT INTO profile(key, value) VALUES (?, ?)', (key, value))
         self.conn.commit()
-        self.add_event("profile_reset", {"at": self.now()})
+        self.add_event('profile_reset', {'at': self.now()})
 
     def reset_database(self) -> None:
         self.conn.executescript(
@@ -387,28 +435,48 @@ class Store:
             DELETE FROM memories;
             DELETE FROM messages;
             DELETE FROM facts;
+            DELETE FROM summaries;
+            DELETE FROM token_usage;
             DELETE FROM events;
             DELETE FROM profile;
-            DELETE FROM sqlite_sequence WHERE name IN ('memories', 'messages', 'facts', 'events');
+            DELETE FROM sqlite_sequence WHERE name IN ('memories', 'messages', 'facts', 'summaries', 'token_usage', 'events');
             """
         )
         for key, value in PROFILE_DEFAULTS.items():
-            self.conn.execute(
-                "INSERT INTO profile(key, value) VALUES (?, ?)",
-                (key, value),
-            )
+            self.conn.execute('INSERT INTO profile(key, value) VALUES (?, ?)', (key, value))
         self.conn.commit()
-        self.add_event("database_reset", {"at": self.now()})
+        self.add_event('database_reset', {'at': self.now()})
 
     def add_event(self, event_type: str, payload: dict[str, Any]) -> None:
         self.conn.execute(
-            "INSERT INTO events(type, payload, created_at) VALUES (?, ?, ?)",
+            'INSERT INTO events(type, payload, created_at) VALUES (?, ?, ?)',
             (event_type, json.dumps(payload, ensure_ascii=False), self.now()),
         )
         self.conn.commit()
 
     def recent_events(self, limit: int = 20) -> list[sqlite3.Row]:
         return self.conn.execute(
-            "SELECT * FROM events ORDER BY id DESC LIMIT ?",
+            'SELECT * FROM events ORDER BY id DESC LIMIT ?',
             (limit,),
         ).fetchall()
+
+    def backup_database(self, backup_dir: str | Path | None = None, keep: int = 8) -> Path | None:
+        if not self.path.exists():
+            return None
+        backup_root = Path(backup_dir) if backup_dir else self.path.parent / 'backups'
+        backup_root.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now().strftime('%Y%m%d-%H%M%S')
+        target = backup_root / f'{self.path.stem}-{stamp}{self.path.suffix}'
+        self.conn.commit()
+        shutil.copy2(self.path, target)
+        backups = sorted(
+            backup_root.glob(f'{self.path.stem}-*{self.path.suffix}'),
+            key=lambda item: item.stat().st_mtime,
+            reverse=True,
+        )
+        for old in backups[max(0, int(keep)):]:
+            try:
+                old.unlink()
+            except OSError:
+                pass
+        return target

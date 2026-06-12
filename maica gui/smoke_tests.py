@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -57,9 +58,43 @@ def compile_python() -> None:
 
 
 def validate_json() -> None:
-    for path in (CLI_DIR / 'config.example.json', ROOT_DIR / 'maica cli factory' / 'config.example.json'):
+    for path in (CLI_DIR / 'config.example.json',):
         with path.open('r', encoding='utf-8-sig') as handle:
             json.load(handle)
+
+
+def test_utf8_sources() -> None:
+    suffixes = {'.py', '.md', '.json', '.jsonl', '.ps1', '.txt'}
+    excluded_dirs = {
+        '.git',
+        '__pycache__',
+        '.safe_test',
+        'logs',
+        'backups',
+        'dist',
+        'build',
+    }
+    mojibake_markers = (
+        chr(0xFFFD),
+        '\u951f',
+        '\u6d93',
+        '\u7ec9',
+        '\u59af',
+        '\u7487',
+        '\u59dd',
+        '\u93b4',
+        '\u9428',
+    )
+    for base in (CLI_DIR, GUI_DIR):
+        for path in base.rglob('*'):
+            if not path.is_file() or path.suffix.lower() not in suffixes:
+                continue
+            if any(part in excluded_dirs for part in path.parts):
+                continue
+            text = path.read_text(encoding='utf-8-sig')
+            bad = [marker for marker in mojibake_markers if marker in text]
+            if bad:
+                raise AssertionError(f'mojibake marker {bad[0]!r} found in {path}')
 
 
 def test_launchers_exist() -> None:
@@ -128,6 +163,9 @@ def test_engine_fake_chat() -> None:
                 }
             )
 
+        def chat_with_usage(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+            return {'content': self.chat(messages), 'usage': {'total_tokens': 7}, 'model': 'fake'}
+
     with tempfile.TemporaryDirectory(prefix='maica-smoke-') as temp_dir:
         config = dict(DEFAULT_CONFIG)
         config.update(
@@ -139,6 +177,7 @@ def test_engine_fake_chat() -> None:
                 'embedding_enabled': False,
                 'memory_embedding_enabled': False,
                 'embedding_service_enabled': False,
+                'style_enabled': False,
                 'show_debug': False,
             }
         )
@@ -242,6 +281,8 @@ def main() -> int:
     print('compile_python ok')
     validate_json()
     print('validate_json ok')
+    test_utf8_sources()
+    print('utf8_sources ok')
     test_launchers_exist()
     print('launchers_exist ok')
     test_diagnostics()

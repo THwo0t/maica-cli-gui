@@ -3,6 +3,7 @@
 *
 
 !.gitignore
+!.gitattributes
 !README.md
 !run_gui.ps1
 !run_gui_safe.ps1
@@ -17,21 +18,11 @@ maica cli/config.json
 maica cli/maica_cli.db
 maica cli/*.db
 maica cli/logs/
+maica cli/backups/
 maica cli/__pycache__/
 maica cli/**/__pycache__/
 maica cli/data/*.faiss
 maica cli/data/*_meta.jsonl
-
-# Sanitized factory snapshot
-!maica cli factory/
-!maica cli factory/**
-maica cli factory/config.json
-maica cli factory/*.db
-maica cli factory/logs/
-maica cli factory/__pycache__/
-maica cli factory/**/__pycache__/
-maica cli factory/data/*.faiss
-maica cli factory/data/*_meta.jsonl
 
 # GUI source
 !maica gui/

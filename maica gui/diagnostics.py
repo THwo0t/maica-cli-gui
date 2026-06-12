@@ -21,7 +21,6 @@ from typing import Any
 ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 CLI_DIR = ROOT_DIR / 'maica cli'
-FACTORY_DIR = ROOT_DIR / 'maica cli factory'
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 CONFIG_PATH = CLI_DIR / 'config.json'
 DB_PATH = CLI_DIR / 'maica_cli.db'
@@ -148,7 +147,7 @@ def gh_auth_snapshot() -> dict[str, Any]:
 def collect_report() -> dict[str, Any]:
     return {
         'app': 'MAICA CLI GUI',
-        'diagnostics_version': '0.9.8',
+        'diagnostics_version': '0.10.4',
         'python': {
             'executable': sys.executable,
             'version': sys.version,
@@ -164,11 +163,9 @@ def collect_report() -> dict[str, Any]:
             'database': path_status(DB_PATH),
             'gui_dir': path_status(GUI_DIR),
             'cli_dir': path_status(CLI_DIR),
-            'factory_dir': path_status(FACTORY_DIR),
             'asset_runtime_dir': path_status(ASSET_DIR),
             'asset_manifest': path_status(ASSET_DIR / 'manifest.json'),
             'example_config': path_status(CLI_DIR / 'config.example.json'),
-            'factory_example_config': path_status(FACTORY_DIR / 'config.example.json'),
         },
         'modules': {
             'PySide6': module_available('PySide6'),

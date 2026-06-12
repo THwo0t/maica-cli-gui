@@ -25,6 +25,7 @@ from embedding_index import prewarm_embedding_model  # noqa: E402
 from engine import MaicaEngine  # noqa: E402
 from mfocus import status_summary  # noqa: E402
 from config_io import save_json  # noqa: E402
+from data_portability import export_user_data, import_user_data, preview_user_data  # noqa: E402
 
 
 class GuiEngineWorker(QObject):
@@ -69,6 +70,7 @@ class GuiEngineWorker(QObject):
         config = self.engine.config
         if not config.get('gui_disable_thread_embeddings', True):
             return
+        config['gui_prewarm_embeddings'] = False
         if config.get('embedding_service_enabled', False):
             self.status.emit('Embedding service mode is enabled; GUI will not load vectors in-process.')
             return
@@ -77,7 +79,6 @@ class GuiEngineWorker(QObject):
             if config.get(key):
                 config[key] = False
                 disabled.append(key)
-        config['gui_prewarm_embeddings'] = False
         if disabled:
             self.status.emit(
                 'GUI thread vector retrieval is disabled for stability. CLI can still use local vectors.'
@@ -229,6 +230,22 @@ class GuiEngineWorker(QObject):
     def export_debug(self, path: str) -> None:
         self._run_data_action('export_debug', path=path)
 
+    @Slot(str)
+    def export_user_data(self, path: str) -> None:
+        self._run_data_action('export_user_data', path=path)
+
+    @Slot(str, bool)
+    def import_user_data(self, path: str, replace: bool) -> None:
+        self._run_data_action('import_user_data', path=path, replace=replace)
+
+    @Slot(str)
+    def preview_import(self, path: str) -> None:
+        self._run_data_action('preview_import', path=path)
+
+    @Slot()
+    def summarize_memory(self) -> None:
+        self._run_data_action('summarize_memory')
+
     @Slot(dict)
     def save_config(self, updates: dict) -> None:
         self._run_data_action('save_config', updates=updates)
@@ -236,7 +253,7 @@ class GuiEngineWorker(QObject):
     def _run_request(self, mode: str, text: str) -> None:
         try:
             if self.engine is None:
-                self.engine = MaicaEngine()
+                self._ensure_engine()
             if mode == 'spire':
                 result = self.engine.spire(text)
             else:
@@ -316,6 +333,24 @@ class GuiEngineWorker(QObject):
                     target.parent.mkdir(parents=True, exist_ok=True)
                     target.write_text(self._debug_payload(engine), encoding='utf-8')
                     notice = f'Exported debug info: {target}'
+            elif action == 'export_user_data':
+                target = Path(str(kwargs.get('path') or '')).expanduser()
+                if target:
+                    result = export_user_data(engine.store, target)
+                    notice = f'Exported user data: {result["path"]}'
+            elif action == 'preview_import':
+                target = Path(str(kwargs.get('path') or '')).expanduser()
+                if target:
+                    result = preview_user_data(target)
+                    notice = 'Import preview: ' + json.dumps(result, ensure_ascii=False)
+            elif action == 'import_user_data':
+                target = Path(str(kwargs.get('path') or '')).expanduser()
+                if target:
+                    result = import_user_data(engine.store, target, bool(kwargs.get('replace', False)))
+                    notice = 'Imported user data: ' + json.dumps(result, ensure_ascii=False)
+            elif action == 'summarize_memory':
+                result = engine.summarize_recent_memory()
+                notice = 'Memory summary: ' + json.dumps(result, ensure_ascii=False)
             elif action == 'save_config':
                 updates = kwargs.get('updates') if isinstance(kwargs.get('updates'), dict) else {}
                 applied = self._apply_config_updates(engine, updates)
@@ -346,7 +381,10 @@ class GuiEngineWorker(QObject):
             'memories': [dict(row) for row in engine.store.all_memories()],
             'facts': [dict(row) for row in engine.store.search_facts('', 200)],
             'events': [dict(row) for row in engine.store.recent_events(30)],
+            'summaries': [dict(row) for row in engine.store.recent_summaries(20)],
+            'recent_messages': engine.store.recent_messages(int(engine.config.get('gui_load_recent_messages', 20))),
             'status': status_summary(engine.store, engine.config),
+            'token_usage': engine.store.token_usage_summary(),
             'config': self._safe_config(engine.config),
         }
 
@@ -360,6 +398,15 @@ class GuiEngineWorker(QObject):
             'temperature',
             'top_p',
             'max_tokens',
+            'frequency_penalty',
+            'presence_penalty',
+            'streaming_enabled',
+            'response_output_mode',
+            'metadata_extract_enabled',
+            'response_planner_mode',
+            'example_bank_limit',
+            'example_bank_weight',
+            'example_bank_min_score',
             'mfocus_mode',
             'mtrigger_mode',
             'tts_enabled',
@@ -380,6 +427,13 @@ class GuiEngineWorker(QObject):
             'embedding_service_timeout',
             'gui_disable_thread_embeddings',
             'gui_background_mode',
+            'gui_load_recent_messages',
+            'gui_idle_spire_enabled',
+            'gui_idle_spire_minutes',
+            'gui_startup_greeting_enabled',
+            'auto_memory_summary_enabled',
+            'auto_memory_summary_turns',
+            'token_stats_enabled',
             'show_debug',
         }
         for key, value in config.items():
@@ -403,6 +457,15 @@ class GuiEngineWorker(QObject):
             'temperature': float,
             'top_p': float,
             'max_tokens': int,
+            'frequency_penalty': float,
+            'presence_penalty': float,
+            'streaming_enabled': bool,
+            'response_output_mode': str,
+            'metadata_extract_enabled': bool,
+            'response_planner_mode': str,
+            'example_bank_limit': int,
+            'example_bank_weight': float,
+            'example_bank_min_score': float,
             'mfocus_mode': str,
             'mtrigger_mode': str,
             'show_debug': bool,
@@ -424,6 +487,13 @@ class GuiEngineWorker(QObject):
             'embedding_service_timeout': int,
             'gui_disable_thread_embeddings': bool,
             'gui_background_mode': str,
+            'gui_load_recent_messages': int,
+            'gui_idle_spire_enabled': bool,
+            'gui_idle_spire_minutes': int,
+            'gui_startup_greeting_enabled': bool,
+            'auto_memory_summary_enabled': bool,
+            'auto_memory_summary_turns': int,
+            'token_stats_enabled': bool,
         }
         applied: list[str] = []
         for key, caster in allowed.items():

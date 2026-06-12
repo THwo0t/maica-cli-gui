@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import datetime as dt
 from pathlib import Path
 from typing import Any
 
@@ -11,8 +12,17 @@ from typing import Any
 def load_json(path: Path, default: dict[str, Any] | None = None) -> dict[str, Any]:
     if not path.exists():
         return dict(default or {})
-    with path.open("r", encoding="utf-8-sig") as handle:
-        data = json.load(handle)
+    try:
+        with path.open("r", encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+    except json.JSONDecodeError:
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        broken = path.with_suffix(path.suffix + f".broken-{stamp}")
+        try:
+            path.replace(broken)
+        except OSError:
+            pass
+        return dict(default or {})
     if default is None:
         return data
     merged = default.copy()
