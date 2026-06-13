@@ -288,6 +288,49 @@ def test_engine_language_rewrite() -> None:
             engine.close()
 
 
+def test_prompt_language_systems() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from mfocus import build_messages
+    from store import Store
+
+    with tempfile.TemporaryDirectory(prefix='maica-smoke-prompt-language-') as temp_dir:
+        for language in ('en', 'zh'):
+            store = Store(Path(temp_dir) / f'{language}.db')
+            config = dict(DEFAULT_CONFIG)
+            config.update(
+                {
+                    'language': language,
+                    'api_key_required': False,
+                    'jsonl_logs_enabled': False,
+                    'style_enabled': False,
+                    'response_planner_enabled': True,
+                    'embedding_enabled': False,
+                    'memory_embedding_enabled': False,
+                    'embedding_service_enabled': False,
+                }
+            )
+            try:
+                messages, _plan = build_messages(store, config, '今天学习有点累')
+                system = messages[0]['content']
+                if language == 'en':
+                    check('You are Monika' in system, 'English persona missing')
+                    check('Monika lens:' in system, 'English lens missing')
+                    check('This turn direction:' in system, 'English planner heading missing')
+                    check('Relevant context.' in system, 'English context heading missing')
+                    check('莫妮卡视角提示:' not in system, 'Chinese lens leaked into English system')
+                    check('本轮对话方向:' not in system, 'Chinese planner leaked into English system')
+                else:
+                    check('你叫莫妮卡' in system, 'Chinese persona missing')
+                    check('莫妮卡视角提示:' in system, 'Chinese lens missing')
+                    check('本轮对话方向:' in system, 'Chinese planner heading missing')
+                    check('相关上下文。' in system, 'Chinese context heading missing')
+                    check('Monika lens:' not in system, 'English lens leaked into Chinese system')
+                    check('This turn direction:' not in system, 'English planner leaked into Chinese system')
+            finally:
+                store.close()
+
+
 def test_package_audit() -> None:
     with tempfile.TemporaryDirectory(prefix='maica-package-audit-') as temp_dir:
         safe_root = Path(temp_dir)
@@ -430,6 +473,8 @@ def main() -> int:
     print('engine_fake_chat ok')
     test_engine_language_rewrite()
     print('engine_language_rewrite ok')
+    test_prompt_language_systems()
+    print('prompt_language_systems ok')
     test_package_audit()
     print('package_audit ok')
     test_gui_offscreen()

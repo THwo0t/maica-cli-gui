@@ -9,7 +9,7 @@ from typing import Any
 
 from embedding_index import search_vector_examples
 from embedding_service_client import search_service_examples
-from text_utils import contains_cjk, split_query_tokens
+from text_utils import contains_cjk, cjk_ratio, split_query_tokens
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -138,6 +138,15 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _example_matches_target_language(user: str, assistant: str, language: str) -> bool:
+    combined = f'{user}\n{assistant}'
+    if str(language or '').lower().startswith('en'):
+        return not contains_cjk(combined)
+    # Chinese mode should use Chinese examples. English terms, names, and
+    # acronyms inside otherwise-Chinese examples are fine.
+    return cjk_ratio(combined) > 0.08
 
 
 def load_dialogue_examples(paths: list[str | Path]) -> list[dict[str, Any]]:
@@ -388,10 +397,7 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
         candidates = load_dialogue_examples(_example_paths(config))
         retrieval_mode = 'lexical' if retrieval_mode != 'service' else 'service_fallback_lexical'
 
-    # When the reply language is English, CJK examples cannot demonstrate
-    # wording or rhythm, so they are filtered here instead of being shown
-    # as empty placeholders in the prompt.
-    english_target = str(config.get('language') or 'en').lower().startswith('en')
+    target_language = str(config.get('language') or 'en').lower()
     scored: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
     for item in candidates:
         if not isinstance(item, dict):
@@ -400,7 +406,7 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
         assistant = str(item.get('assistant') or '').strip()
         if not user or not assistant:
             continue
-        if english_target and (contains_cjk(user) or contains_cjk(assistant)):
+        if not _example_matches_target_language(user, assistant, target_language):
             continue
         if _safe_int(item.get('quality'), 0) < min_quality:
             continue
@@ -457,14 +463,18 @@ def format_examples_for_prompt(examples: list[dict[str, Any]], language: str = '
     if not examples:
         return ''
     english = str(language or '').lower().startswith('en')
-    lines = ['Reference examples for rhythm and intimacy only. Do not reuse exact wording.']
+    lines = (
+        ['Reference examples for rhythm and intimacy only. Do not reuse exact wording.']
+        if english
+        else ['参考样例只用于节奏、亲密度和语气，不要照抄原句。']
+    )
     for index, item in enumerate(examples[:5], start=1):
         user = str(item.get('user') or '').strip()
         assistant = str(item.get('assistant') or '').strip()
         notes = str(item.get('notes') or '').strip()
-        lines.append(f'Example {index}:')
-        lines.append(f'User: {user}')
-        lines.append(f'Monika: {assistant}')
-        if notes and not (english and contains_cjk(notes)):
-            lines.append(f'Notes: {notes}')
+        lines.append(f'Example {index}:' if english else f'样例 {index}:')
+        lines.append(f'User: {user}' if english else f'用户: {user}')
+        lines.append(f'Monika: {assistant}' if english else f'莫妮卡: {assistant}')
+        if notes:
+            lines.append(f'Notes: {notes}' if english else f'说明: {notes}')
     return '\n'.join(lines)

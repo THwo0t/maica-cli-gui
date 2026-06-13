@@ -232,18 +232,28 @@ def response_format_instruction(language: str = 'zh', mode: str = 'dual') -> str
     english = str(language or '').lower().startswith('en')
     target = 'English' if english else 'Simplified Chinese'
     if mode == 'json':
+        if english:
+            return (
+                'Output exactly one JSON object: {"segments":[{"text":"one natural sentence",'
+                '"emotion":"smile","action":{"type":"none"}}]}. '
+                'Every text field must be natural English.'
+            )
         return (
-            'Output exactly one JSON object: {"segments":[{"text":"one natural sentence",'
-            '"emotion":"smile","action":{"type":"none"}}]}. '
-            f'Every text field must be natural {target}.'
+            '只输出一个 JSON 对象: {"segments":[{"text":"一句自然对话",'
+            '"emotion":"smile","action":{"type":"none"}}]}。'
+            '所有 text 字段都必须是自然简体中文。'
         )
     if mode == 'legacy_marker':
+        if english:
+            return (
+                'Reply in natural English. You may prefix exactly one metadata marker in square brackets, '
+                'such as [smile], [shy], or [concerned]. Do not use parenthesized or starred stage directions.'
+            )
+        return '请用自然简体中文回复。可以在开头使用一个方括号元数据标记，例如 [smile]、[shy] 或 [concerned]。不要在正文里写括号动作或星号动作。'
+    if english:
         return (
-            f'Reply in natural {target}. You may prefix exactly one metadata marker in square brackets, '
-            'such as [smile], [shy], or [concerned]. Do not use parenthesized or starred stage directions.'
+            'Reply in natural English. Prefer plain dialogue with an optional leading metadata marker in square brackets, '
+            'such as [smile], [shy], or [concerned]. JSON is also accepted, but any dialogue text must use English. '
+            'Do not use parenthesized or starred stage directions in the dialogue body.'
         )
-    return (
-        f'Reply in natural {target}. Prefer plain dialogue with an optional leading metadata marker in square brackets, '
-        'such as [smile], [shy], or [concerned]. JSON is also accepted, but any dialogue text must use the configured language. '
-        'Do not use parenthesized or starred stage directions in the dialogue body.'
-    )
+    return '请用自然简体中文回复。可以在开头使用一个方括号元数据标记，也可以输出 JSON；但任何对话 text 都必须使用简体中文。不要在正文里写括号动作或星号动作。'

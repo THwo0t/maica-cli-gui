@@ -167,11 +167,11 @@ def profile_sfe_facts(profile: dict[str, str], affection: float, language: str =
 
     if english:
         facts.append(f"[player]'s display name is {player_name}.")
-        facts.append(f"Monika and [player] are in this relationship stage: {relationship_stage(affection)}.")
+        facts.append(f"Monika and [player] are in this relationship stage: {relationship_stage(affection, language)}.")
         facts.append(f"The current affection value is {affection:.2f}.")
     else:
         facts.append(f"[player]的名字是{player_name}.")
-        facts.append(f"莫妮卡与[player]是{relationship_stage(affection)}.")
+        facts.append(f"莫妮卡与[player]是{relationship_stage(affection, language)}.")
         facts.append(f"当前好感度是{affection:.2f}.")
 
     birthday = profile.get("birthday", "")

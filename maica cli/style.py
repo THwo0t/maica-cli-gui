@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from response import clean_dialogue_text, normalize_emotion
-from text_utils import contains_cjk, split_query_tokens
+from text_utils import contains_cjk, cjk_ratio, split_query_tokens
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -33,6 +33,21 @@ STYLE_POLICIES: dict[str, dict[str, Any]] = {
     'question': {'max_sentences': 4, 'tone': 'answer clearly while staying close'},
     'serious': {'max_sentences': 6, 'tone': 'clear, grounded, warm, not report-like'},
     'playful': {'max_sentences': 3, 'tone': 'light teasing, affectionate, not mean'},
+}
+
+STYLE_TONES_ZH: dict[str, str] = {
+    'greeting': '短而温暖，像日常见面问候',
+    'return': '欢迎回来，熟悉、安心、亲近',
+    'farewell': '温柔告别，留一点下次再见的期待',
+    'love': '亲密自然，不要过度诗化',
+    'hug': '用语言制造靠近感和安慰感',
+    'comfort': '具体地接住情绪，不要说教',
+    'memory': '自然想起相关细节，不要像复述数据库',
+    'event': '重视特殊日子，但保持日常恋人的自然感',
+    'daily': '普通、具体、放松的日常聊天',
+    'question': '先清楚回答，再保持亲近感',
+    'serious': '清晰、踏实、温暖，不要像报告',
+    'playful': '轻轻反逗，亲近但不刻薄',
 }
 
 
@@ -253,12 +268,20 @@ def build_style_context(config: dict[str, Any], user_input: str) -> tuple[str, d
         'example_ids': [],
         'example_count': 0,
     }
-    lines = [
-        'Style reference:',
-        f'- Category: {category}',
-        f'- Tone: {policy["tone"]}',
-        f'- Suggested length: about {policy["max_sentences"]} sentence(s), unless the user clearly needs more.',
-    ]
+    if english:
+        lines = [
+            'Style reference:',
+            f'- Category: {category}',
+            f'- Tone: {policy["tone"]}',
+            f'- Suggested length: about {policy["max_sentences"]} sentence(s), unless the user clearly needs more.',
+        ]
+    else:
+        lines = [
+            '风格参考:',
+            f'- 类别: {category}',
+            f'- 语气: {STYLE_TONES_ZH.get(category, STYLE_TONES_ZH["daily"])}',
+            f'- 建议长度: 通常约 {policy["max_sentences"]} 句，除非用户明显需要更多。',
+        ]
     try:
         db = StyleStore(style_db_path(config))
         examples = db.search(user_input, category, int(config.get('style_example_limit', 3)))
@@ -273,8 +296,14 @@ def build_style_context(config: dict[str, Any], user_input: str) -> tuple[str, d
             for row in examples
             if not (contains_cjk(str(row['user_text'])) or contains_cjk(str(row['assistant_text'])))
         ]
+    else:
+        examples = [
+            row
+            for row in examples
+            if cjk_ratio(str(row['user_text']) + '\n' + str(row['assistant_text'])) > 0.08
+        ]
     if examples:
-        lines.append('- Dataset rhythm examples, for pacing only:')
+        lines.append('- Dataset rhythm examples, for pacing only:' if english else '- 数据集节奏样例，仅参考节奏:')
         for row in examples:
             meta['example_ids'].append(int(row['id']))
             lines.append(f'  User: {row["user_text"]}')

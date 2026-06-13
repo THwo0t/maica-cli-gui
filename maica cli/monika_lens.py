@@ -60,18 +60,12 @@ REFLECTIVE_ALLOWED_CATEGORIES = {'daily', 'comfort', 'question', 'serious', 'mem
 
 
 def detect_reflective_topics(user_input: str, language: str) -> list[tuple[str, str]]:
+    table = REFLECTIVE_TOPIC_HINTS_EN if language.startswith('en') else REFLECTIVE_TOPIC_HINTS_ZH
     lowered = str(user_input or '').lower()
     matches = []
-    merged: dict[str, list[str]] = {}
-    for topic, (keywords, _hint) in REFLECTIVE_TOPIC_HINTS_EN.items():
-        merged.setdefault(topic, []).extend(keywords)
-    for topic, (keywords, _hint) in REFLECTIVE_TOPIC_HINTS_ZH.items():
-        merged.setdefault(topic, []).extend(keywords)
-    for topic, keywords in merged.items():
+    for topic, (keywords, hint) in table.items():
         if any(keyword.lower() in lowered for keyword in keywords):
-            hint = REFLECTIVE_TOPIC_HINTS_EN.get(topic, ([], ''))[1]
-            if hint:
-                matches.append((topic, hint))
+            matches.append((topic, hint))
     return matches
 
 
@@ -83,12 +77,12 @@ def build_monika_lens_context(config: dict[str, Any], user_input: str) -> tuple[
 
     language = str(config.get('language') or 'en').lower()
     category = categorize_user_input(user_input)
-    table = LENS_BY_CATEGORY_EN
+    table = LENS_BY_CATEGORY_EN if language.startswith('en') else LENS_BY_CATEGORY_ZH
     hints = table.get(category, table['daily'])
     max_hints = max(1, int(config.get('monika_lens_hint_limit', 2)))
     selected = hints[:max_hints]
 
-    lines = ['Monika lens:']
+    lines = ['Monika lens:' if language.startswith('en') else '莫妮卡视角提示:']
     for hint in selected:
         lines.append(f'- {hint}')
 
@@ -98,7 +92,7 @@ def build_monika_lens_context(config: dict[str, Any], user_input: str) -> tuple[
         if reflective_matches:
             limit = max(1, int(config.get('reflective_lens_hint_limit', 1)))
             reflective_matches = reflective_matches[:limit]
-            lines.append('Small reflective hint:')
+            lines.append('Small reflective hint:' if language.startswith('en') else '日常反思提示:')
             for _, hint in reflective_matches:
                 lines.append(f'- {hint}')
 

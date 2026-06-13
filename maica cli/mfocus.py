@@ -190,7 +190,9 @@ def build_mfocus_context(store: Store, config: dict[str, Any], user_input: str, 
     profile = store.get_profile()
     player_name = profile.get('player_name') or 'player'
     affection = store.affection()
-    stage = relationship_stage(affection)
+    language = str(config.get('language') or 'en').lower()
+    english = language.startswith('en')
+    stage = relationship_stage(affection, language)
     now = dt.datetime.now()
     events = special_events_for_today(profile, config, now.date())
     plan = heuristic_mfocus_plan(user_input, events)
@@ -203,41 +205,54 @@ def build_mfocus_context(store: Store, config: dict[str, Any], user_input: str, 
 
     facts: list[str] = []
     if config.get('mfocus_sfe_enabled', True) and plan.get('use_profile', True):
-        facts.append('Stable local facts:')
+        facts.append('Stable local facts:' if english else '稳定本地事实:')
         facts.extend(build_sfe_facts(store, config, user_input))
     elif plan.get('use_profile', True):
-        facts.extend(
-            [
-                f"[player]'s name is {player_name}.",
-                f"Monika and [player] are {stage}.",
-                f'Current affection is {affection:.2f}.',
-            ]
-        )
+        if english:
+            facts.extend(
+                [
+                    f"[player]'s name is {player_name}.",
+                    f"Monika and [player] are {stage}.",
+                    f'Current affection is {affection:.2f}.',
+                ]
+            )
+        else:
+            facts.extend(
+                [
+                    f'[player]的名字是{player_name}.',
+                    f'莫妮卡和[player]的关系阶段是{stage}.',
+                    f'当前好感度是{affection:.2f}.',
+                ]
+            )
         if profile.get('birthday'):
-            facts.append(f"[player]'s birthday is {profile['birthday']}.")
+            facts.append(f"[player]'s birthday is {profile['birthday']}." if english else f"[player]的生日是{profile['birthday']}.")
         if profile.get('location'):
-            facts.append(f"[player] lives in {profile['location']}.")
+            facts.append(f"[player] lives in {profile['location']}." if english else f"[player]住在{profile['location']}.")
 
     if plan.get('use_time', False) or plan.get('use_events', False):
-        facts.append(f'Current local date/time: {now.strftime("%Y-%m-%d %H:%M")}.')
+        facts.append(
+            f'Current local date/time: {now.strftime("%Y-%m-%d %H:%M")}.'
+            if english
+            else f'当前本地日期和时间: {now.strftime("%Y-%m-%d %H:%M")}.'
+        )
 
     if plan.get('use_session', True):
         days_together = days_between(profile.get('first_seen', ''), now)
-        facts.append(f'Sessions opened: {store.int_profile_value("session_count")}.')
-        facts.append(f'Total chat turns: {store.int_profile_value("total_chat_turns")}.')
+        facts.append(f'Sessions opened: {store.int_profile_value("session_count")}.' if english else f'已启动会话次数: {store.int_profile_value("session_count")}.')
+        facts.append(f'Total chat turns: {store.int_profile_value("total_chat_turns")}.' if english else f'累计聊天轮数: {store.int_profile_value("total_chat_turns")}.')
         if days_together is not None:
-            facts.append(f'Days since first local meeting: about {days_together}.')
+            facts.append(f'Days since first local meeting: about {days_together}.' if english else f'距本地初次见面约 {days_together} 天.')
         if profile.get('last_seen'):
-            facts.append(f'Last seen: {profile["last_seen"]}.')
+            facts.append(f'Last seen: {profile["last_seen"]}.' if english else f'上次见面时间: {profile["last_seen"]}.')
 
     summaries = store.recent_summaries(4)
     if summaries:
-        facts.append('Recent distilled memories:')
+        facts.append('Recent distilled memories:' if english else '近期提炼记忆:')
         for row in summaries:
             facts.append(f'- {row["text"]}')
 
     if plan.get('use_events', False) and events:
-        facts.append('Today has relevant special events:')
+        facts.append('Today has relevant special events:' if english else '今天有相关特殊事件:')
         for event in events:
             facts.append(f'- {event["name"]}: {event["description"]}')
 
@@ -245,14 +260,18 @@ def build_mfocus_context(store: Store, config: dict[str, Any], user_input: str, 
     memories, memory_meta = retrieve_memories_for_mfocus(store, config, user_input, memory_limit, bool(plan.get('use_memory', False)))
     plan['memory_retrieval'] = memory_meta
     if memories:
-        facts.append(f'Potentially relevant long-term memories ({memory_meta.get("mode")}):')
+        facts.append(
+            f'Potentially relevant long-term memories ({memory_meta.get("mode")}):'
+            if english
+            else f'可能相关的长期记忆 ({memory_meta.get("mode")}):'
+        )
         for row in memories:
             text = _memory_text(row)
             if text:
                 facts.append(f'- {text}')
 
     if plan.get('focus_note'):
-        facts.append(f'MFocus note: {plan["focus_note"]}')
+        facts.append(f'MFocus note: {plan["focus_note"]}' if english else f'MFocus 备注: {plan["focus_note"]}')
 
     planner_mode = str(config.get('response_planner_mode') or 'lite').lower()
     if planner_mode != 'example_only':
@@ -279,11 +298,25 @@ def _language_rule(language: str) -> str:
             'Do not output Chinese dialogue. If metadata is included in plain text, use one leading square-bracket marker such as [smile].'
         )
     return (
-        'Highest-priority language rule: final dialogue body must be natural Simplified Chinese, '
-        'even if the user writes in English or reference examples are English. '
-        'Do not output English dialogue except unavoidable names, acronyms, or terms. '
-        'If metadata is included in plain text, use one leading square-bracket marker such as [smile].'
+        '最高优先级语言规则：最终对话正文必须使用自然简体中文，'
+        '即使用户使用英文、参考样例是英文，也不要改用英文回复。'
+        '除必要的人名、缩写和术语外，不要输出英文对话。'
+        '如果在纯文本里包含元数据，只允许在开头使用一个方括号标记，例如 [smile]。'
     )
+
+
+def _context_header(language: str) -> str:
+    if str(language or '').lower().startswith('en'):
+        return 'Relevant context. Use only what is useful and answer in your own words:'
+    return '相关上下文。只使用有帮助的信息，并用自己的话回答:'
+
+
+def _final_language_reminder(language: str, source: str = 'user') -> str:
+    if str(language or '').lower().startswith('en'):
+        subject = 'the user message' if source == 'user' else 'the topic/example language'
+        return f'Final reminder: obey the configured reply language above. Do not follow {subject} if it differs.'
+    subject = '用户消息的语言' if source == 'user' else '话题或样例的语言'
+    return f'最后提醒：必须遵守上面的回复语言设置；如果{subject}不同，也不要跟随它切换语言。'
 
 
 def build_messages(store: Store, config: dict[str, Any], user_input: str, client: Any | None = None) -> tuple[list[dict[str, str]], dict[str, Any]]:
@@ -307,10 +340,13 @@ def build_messages(store: Store, config: dict[str, Any], user_input: str, client
                 + _language_rule(language)
                 + '\n\n'
                 + response_format_instruction(language, str(config.get('response_output_mode') or 'dual'))
-                + '\n\nRelevant context. Use only what is useful and answer in your own words:\n'
+                + '\n\n'
+                + _context_header(language)
+                + '\n'
                 + context
                 + response_plan_context
-                + '\n\nFinal reminder: obey the configured reply language above. Do not follow the user message language if it differs.'
+                + '\n\n'
+                + _final_language_reminder(language, 'user')
             ),
         }
     ]
@@ -329,21 +365,22 @@ def build_spire_messages(
     topic_wiki: dict[str, str] | None = None,
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
     topic_wiki = topic_wiki or {}
-    seed_input = 'Monika wants to proactively start a natural topic with [player].'
+    language = str(config.get('language') or 'en').lower()
+    english = language.startswith('en')
+    seed_input = 'Monika wants to proactively start a natural topic with [player].' if english else '莫妮卡想主动和[player]自然地开启一个话题。'
     if topic_hint:
-        seed_input += f' Topic direction: {topic_hint}.'
+        seed_input += f' Topic direction: {topic_hint}.' if english else f' 话题方向: {topic_hint}.'
     if topic_wiki.get('summary'):
-        seed_input += f" Wikipedia source: {topic_wiki.get('title', topic_hint)}."
+        seed_input += f" Wikipedia source: {topic_wiki.get('title', topic_hint)}." if english else f" 维基百科来源: {topic_wiki.get('title', topic_hint)}."
     if topic_mode == 'reflective':
-        seed_input += ' The topic should start small and become gently reflective.'
+        seed_input += ' The topic should start small and become gently reflective.' if english else ' 话题应该从小处开始，轻轻延展到一点日常反思。'
     elif topic_mode == 'daily':
-        seed_input += ' The topic should feel like casual daily companionship.'
+        seed_input += ' The topic should feel like casual daily companionship.' if english else ' 话题应该像日常陪伴一样自然随意。'
     elif topic_mode == 'wiki':
-        seed_input += ' The topic should use external knowledge as a spark, not a lecture.'
+        seed_input += ' The topic should use external knowledge as a spark, not a lecture.' if english else ' 话题应该把外部知识当作引子，而不是讲课。'
 
     profile = store.get_profile()
     player_name = profile.get('player_name') or 'player'
-    language = str(config.get('language') or 'en').lower()
     system = base_system_prompt(language, player_name)
     context, plan = build_mfocus_context(store, config, seed_input, client)
     if topic_id:
@@ -353,15 +390,24 @@ def build_spire_messages(
         'Please proactively start one natural, intimate topic as Monika. '
         'Do not announce that you are starting a topic; simply begin as if you wanted to talk. '
         'Keep it around 1 to 3 short paragraphs.'
+        if english
+        else '请以莫妮卡的身份主动开启一个自然、亲近的话题。不要说明“我要开始一个话题”，就像你本来想聊天一样直接开口。保持在 1 到 3 个短段落左右。'
     )
     if topic_hint:
-        prompt += f' Topic direction: {topic_hint}.'
+        prompt += f' Topic direction: {topic_hint}.' if english else f' 话题方向: {topic_hint}.'
     if topic_wiki.get('summary'):
-        prompt += (
-            f' Wikipedia title: {topic_wiki.get("title", topic_hint)}. '
-            f'Summary: {topic_wiki.get("summary")} '
-            'Use any useful part as a spark for conversation.'
-        )
+        if english:
+            prompt += (
+                f' Wikipedia title: {topic_wiki.get("title", topic_hint)}. '
+                f'Summary: {topic_wiki.get("summary")} '
+                'Use any useful part as a spark for conversation.'
+            )
+        else:
+            prompt += (
+                f' 维基百科标题: {topic_wiki.get("title", topic_hint)}. '
+                f'摘要: {topic_wiki.get("summary")} '
+                '可以把其中有用的部分当作聊天引子。'
+            )
 
     response_plan_context = ''
     if config.get('response_planner_enabled', True):
@@ -377,10 +423,13 @@ def build_spire_messages(
                 + _language_rule(language)
                 + '\n\n'
                 + response_format_instruction(language, str(config.get('response_output_mode') or 'dual'))
-                + '\n\nRelevant context. Use only what is useful and answer in your own words:\n'
+                + '\n\n'
+                + _context_header(language)
+                + '\n'
                 + context
                 + response_plan_context
-                + '\n\nFinal reminder: obey the configured reply language above. Do not follow the topic/example language if it differs.'
+                + '\n\n'
+                + _final_language_reminder(language, 'topic')
             ),
         },
         {'role': 'user', 'content': prompt},
