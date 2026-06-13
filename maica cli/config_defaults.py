@@ -126,6 +126,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "tts_auto_play": True,
     "tts_rate": 0,
     "tts_volume": 90,
+    "tts_playback_backend": "auto",
+    "tts_playback_command": "",
     "tts_bailian_api_key": "",
     "tts_bailian_endpoint": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
     "tts_bailian_model": "cosyvoice-v3.5-plus",

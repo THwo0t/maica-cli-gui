@@ -135,11 +135,17 @@ def test_embedding_service_help() -> None:
 def test_text_helpers() -> None:
     sys.path.insert(0, str(GUI_DIR))
     from stt import create_stt
-    from tts import clean_tts_text
+    from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text
     from diagnostics import collect_report
 
     assert clean_tts_text('(smiles) I missed you. [debug] hidden') == 'I missed you.'
     assert clean_tts_text('（轻轻握住你的手）I am here.') == 'I am here.'
+    player = SubprocessAudioPlayer({'tts_playback_backend': 'off'})
+    check(player._command(ROOT_DIR / 'missing.wav') == [], 'TTS off backend should not select a player')
+    sapi = WindowsSapiTTS({})
+    sapi.speak('hello')
+    if sys.platform != 'win32':
+        check('only available on Windows' in sapi.last_error, 'Windows SAPI should report a clear non-Windows error')
     result = create_stt({'stt_provider': 'off'}).listen()
     check(not result['ok'], 'Null STT should not recognize speech')
     report = collect_report()

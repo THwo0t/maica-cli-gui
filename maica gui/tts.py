@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import json
+import platform
 import re
+import shlex
+import shutil
 import subprocess
 import threading
 import uuid
@@ -76,16 +79,21 @@ class WindowsSapiTTS:
         self.config = config
         self.process: subprocess.Popen[str] | None = None
         self.lock = threading.Lock()
+        self.last_error = ''
 
     def speak(self, text: str) -> None:
         clean_text = clean_tts_text(text)
         if not clean_text:
             return
+        if platform.system().lower() != 'windows':
+            self.last_error = 'Windows SAPI TTS is only available on Windows. Use Bailian CosyVoice on this OS.'
+            return
         try:
             self.stop()
             thread = threading.Thread(target=self._speak_blocking, args=(clean_text,), daemon=True)
             thread.start()
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
             return
 
     def stop(self) -> None:
@@ -148,11 +156,142 @@ class WindowsSapiTTS:
                 except Exception:
                     pass
             process.wait()
-        except Exception:
+        except Exception as exc:
+            self.last_error = str(exc)
             return
         finally:
             with self.lock:
                 self.process = None
+
+
+class SubprocessAudioPlayer:
+    """Cross-platform audio playback through a small child process."""
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config = config
+        self.process: subprocess.Popen[str] | None = None
+        self.lock = threading.Lock()
+        self.last_error = ''
+
+    def stop(self) -> None:
+        with self.lock:
+            process = self.process
+            self.process = None
+        if process is None:
+            return
+        try:
+            if process.poll() is None:
+                process.terminate()
+        except Exception:
+            pass
+
+    def play(self, audio_path: Path, is_current: Any | None = None) -> None:
+        self.last_error = ''
+        backend = str(self.config.get('tts_playback_backend') or 'auto').strip().lower()
+        if backend in {'off', 'none', 'null'}:
+            return
+        command = self._command(audio_path)
+        if not command:
+            self.last_error = (
+                'No audio playback backend found. Install ffmpeg (ffplay) or mpv, '
+                'or set tts_playback_backend in settings.'
+            )
+            return
+        creation_flags = 0
+        if hasattr(subprocess, 'CREATE_NO_WINDOW'):
+            creation_flags = subprocess.CREATE_NO_WINDOW
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                creationflags=creation_flags,
+            )
+        except Exception as exc:
+            self.last_error = str(exc)
+            return
+        with self.lock:
+            self.process = process
+        try:
+            stdout, stderr = process.communicate()
+            if is_current is not None and not is_current():
+                return
+            if process.returncode not in (0, None):
+                detail = (stderr or stdout or '').strip()
+                self.last_error = f'audio playback failed: {detail or process.returncode}'
+        finally:
+            with self.lock:
+                if self.process is process:
+                    self.process = None
+
+    def _command(self, audio_path: Path) -> list[str]:
+        custom = str(self.config.get('tts_playback_command') or '').strip()
+        if custom:
+            return shlex.split(custom) + [str(audio_path)]
+
+        backend = str(self.config.get('tts_playback_backend') or 'auto').strip().lower()
+        if backend in {'', 'auto'}:
+            for candidate in self._auto_candidates(audio_path):
+                command = self._command_for_backend(candidate, audio_path)
+                if command:
+                    return command
+            return []
+        if backend in {'off', 'none', 'null'}:
+            return []
+        return self._command_for_backend(backend, audio_path)
+
+    def _auto_candidates(self, audio_path: Path) -> list[str]:
+        system = platform.system().lower()
+        if system == 'windows':
+            return ['powershell', 'pwsh', 'ffplay', 'mpv']
+        if system == 'darwin':
+            return ['afplay', 'ffplay', 'mpv']
+        candidates = ['ffplay', 'mpv']
+        if audio_path.suffix.lower() == '.wav':
+            candidates.extend(['paplay', 'aplay'])
+        return candidates
+
+    def _command_for_backend(self, backend: str, audio_path: Path) -> list[str]:
+        suffix = audio_path.suffix.lower()
+        if backend == 'ffplay':
+            exe = shutil.which('ffplay')
+            return [exe, '-nodisp', '-autoexit', '-loglevel', 'quiet', str(audio_path)] if exe else []
+        if backend == 'mpv':
+            exe = shutil.which('mpv')
+            return [exe, '--no-video', '--really-quiet', str(audio_path)] if exe else []
+        if backend == 'afplay':
+            exe = shutil.which('afplay')
+            return [exe, str(audio_path)] if exe else []
+        if backend == 'paplay' and suffix == '.wav':
+            exe = shutil.which('paplay')
+            return [exe, str(audio_path)] if exe else []
+        if backend == 'aplay' and suffix == '.wav':
+            exe = shutil.which('aplay')
+            return [exe, str(audio_path)] if exe else []
+        if backend in {'powershell', 'pwsh'}:
+            exe = shutil.which('powershell') if backend == 'powershell' else shutil.which('pwsh')
+            if not exe:
+                return []
+            safe_path = str(audio_path).replace("'", "''")
+            script = (
+                "Add-Type -AssemblyName PresentationCore;"
+                f"$path='{safe_path}';"
+                "$p=New-Object System.Windows.Media.MediaPlayer;"
+                "$p.Open([System.Uri]::new($path));"
+                "$p.Volume=1.0;"
+                "$p.Play();"
+                "$deadline=(Get-Date).AddSeconds(60);"
+                "while((-not $p.NaturalDuration.HasTimeSpan) -and ((Get-Date) -lt $deadline)){Start-Sleep -Milliseconds 80};"
+                "if($p.NaturalDuration.HasTimeSpan){"
+                "$ms=[int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 350;"
+                "Start-Sleep -Milliseconds $ms"
+                "}else{Start-Sleep -Seconds 8};"
+                "$p.Stop();"
+                "$p.Close();"
+            )
+            return [exe, '-Sta', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script]
+        return []
 
 
 class BailianCosyVoiceTTS:
@@ -170,6 +309,7 @@ class BailianCosyVoiceTTS:
         self.lock = threading.Lock()
         self.generation = 0
         self.last_error = ''
+        self.audio_player = SubprocessAudioPlayer(config)
 
     def speak(self, text: str) -> None:
         clean_text = self._clean_text(text)
@@ -195,6 +335,7 @@ class BailianCosyVoiceTTS:
                     process.terminate()
             except Exception:
                 pass
+        self.audio_player.stop()
         if ws is not None:
             try:
                 ws.close()
@@ -340,61 +481,9 @@ class BailianCosyVoiceTTS:
         }
 
     def _play_audio(self, audio_path: Path, generation: int) -> None:
-        safe_path = str(audio_path).replace("'", "''")
-        script = (
-            "Add-Type -AssemblyName PresentationCore;"
-            f"$path='{safe_path}';"
-            "$p=New-Object System.Windows.Media.MediaPlayer;"
-            "$p.Open([System.Uri]::new($path));"
-            "$p.Volume=1.0;"
-            "$p.Play();"
-            "$deadline=(Get-Date).AddSeconds(60);"
-            "while((-not $p.NaturalDuration.HasTimeSpan) -and ((Get-Date) -lt $deadline)){Start-Sleep -Milliseconds 80};"
-            "if($p.NaturalDuration.HasTimeSpan){"
-            "$ms=[int]$p.NaturalDuration.TimeSpan.TotalMilliseconds + 350;"
-            "Start-Sleep -Milliseconds $ms"
-            "}else{Start-Sleep -Seconds 8};"
-            "$p.Stop();"
-            "$p.Close();"
-        )
-        creation_flags = 0
-        if hasattr(subprocess, 'CREATE_NO_WINDOW'):
-            creation_flags = subprocess.CREATE_NO_WINDOW
-        process = subprocess.Popen(
-            [
-                'powershell',
-                '-Sta',
-                '-NoProfile',
-                '-ExecutionPolicy',
-                'Bypass',
-                '-Command',
-                script,
-            ],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            creationflags=creation_flags,
-        )
-        with self.lock:
-            if not self._is_current_unlocked(generation):
-                try:
-                    process.terminate()
-                except Exception:
-                    pass
-                return
-            self.process = process
-        try:
-            stdout, stderr = process.communicate()
-            # A superseded/stopped generation exits non-zero because we
-            # terminated it on purpose; only a still-current playback that
-            # dies is a real error.
-            if process.returncode not in (0, None) and self._is_current(generation):
-                detail = (stderr or stdout or '').strip()
-                raise RuntimeError(f'audio playback failed: {detail or process.returncode}')
-        finally:
-            with self.lock:
-                if self.process is process:
-                    self.process = None
+        self.audio_player.play(audio_path, is_current=lambda: self._is_current(generation))
+        if self.audio_player.last_error:
+            raise RuntimeError(self.audio_player.last_error)
 
     def _audio_format(self, forced_format: str | None = None) -> str:
         raw_format = forced_format or str(self.config.get('tts_bailian_format') or 'mp3')

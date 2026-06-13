@@ -95,6 +95,9 @@ The GUI supports provider-style TTS adapters.
 }
 ```
 
+Windows SAPI only works on Windows. On Linux and macOS, use a network or
+external TTS provider such as Bailian CosyVoice.
+
 ### Aliyun Bailian CosyVoice
 
 `tts_bailian_api_key` belongs only in your ignored local
@@ -109,6 +112,8 @@ The GUI supports provider-style TTS adapters.
   "tts_bailian_model": "cosyvoice-v3.5-plus",
   "tts_bailian_voice": "",
   "tts_bailian_format": "mp3",
+  "tts_playback_backend": "auto",
+  "tts_playback_command": "",
   "tts_bailian_sample_rate": 22050,
   "tts_bailian_volume": 50,
   "tts_bailian_rate": 1.0,
@@ -118,9 +123,26 @@ The GUI supports provider-style TTS adapters.
 }
 ```
 
-The current adapter requests MP3 audio and plays it through a child PowerShell
-`System.Windows.Media.MediaPlayer` process. This keeps network synthesis and
-playback outside the Qt main thread.
+The current adapter requests MP3 or WAV audio and plays it through a child
+process. Playback backend `auto` chooses a platform-appropriate command:
+
+- Windows: `powershell`, `pwsh`, `ffplay`, or `mpv`.
+- Linux: `ffplay` or `mpv`; WAV can also fall back to `paplay` or `aplay`.
+- macOS: `afplay`, `ffplay`, or `mpv`.
+
+On Arch Linux, install one of these if TTS synthesis works but playback fails:
+
+```bash
+sudo pacman -S ffmpeg
+```
+
+or:
+
+```bash
+sudo pacman -S mpv
+```
+
+This keeps network synthesis and playback outside the Qt main thread.
 
 Before TTS synthesis, the GUI removes bracketed stage directions and metadata
 from the spoken text. The visible chat text is unchanged; only the voice line is

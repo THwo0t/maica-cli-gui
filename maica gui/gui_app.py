@@ -67,6 +67,7 @@ MODE_OPTIONS = ('rule', 'off')
 PLANNER_MODES = ('lite', 'example_only')
 RESPONSE_OUTPUT_MODES = ('dual', 'json', 'legacy_marker')
 TTS_PROVIDERS = ('bailian_cosyvoice', 'windows_sapi', 'off')
+TTS_PLAYBACK_BACKENDS = ('auto', 'ffplay', 'mpv', 'paplay', 'aplay', 'afplay', 'powershell', 'pwsh', 'off')
 STT_PROVIDERS = ('windows_speech', 'off')
 BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
 
@@ -391,6 +392,8 @@ class SettingsDialog(QDialog):
         self.tts_voice = QLineEdit()
         self.tts_format = QComboBox()
         self.tts_format.addItems(('mp3', 'wav'))
+        self.tts_playback_backend = QComboBox()
+        self.tts_playback_backend.addItems(TTS_PLAYBACK_BACKENDS)
         self.tts_instruction = QLineEdit()
         self.stt_provider = QComboBox()
         self.stt_provider.addItems(STT_PROVIDERS)
@@ -434,6 +437,7 @@ class SettingsDialog(QDialog):
         form.addRow('Bailian model', self.tts_model)
         form.addRow('Bailian voice', self.tts_voice)
         form.addRow('Bailian format', self.tts_format)
+        form.addRow('TTS playback', self.tts_playback_backend)
         form.addRow('Bailian instruction', self.tts_instruction)
         form.addRow('STT provider', self.stt_provider)
         form.addRow('STT language', self.stt_language)
@@ -497,6 +501,7 @@ class SettingsDialog(QDialog):
         self.tts_model.setText(str(config.get('tts_bailian_model') or ''))
         self.tts_voice.setText(str(config.get('tts_bailian_voice') or ''))
         self._set_combo(self.tts_format, str(config.get('tts_bailian_format') or 'mp3'))
+        self._set_combo(self.tts_playback_backend, str(config.get('tts_playback_backend') or 'auto'))
         self.tts_instruction.setText(str(config.get('tts_bailian_instruction') or ''))
         self._set_combo(self.stt_provider, str(config.get('stt_provider') or 'windows_speech'))
         self._set_combo(self.stt_language, str(config.get('stt_language') or config.get('language') or 'en'))
@@ -546,6 +551,7 @@ class SettingsDialog(QDialog):
             'tts_bailian_model': self.tts_model.text().strip(),
             'tts_bailian_voice': self.tts_voice.text().strip(),
             'tts_bailian_format': self.tts_format.currentText(),
+            'tts_playback_backend': self.tts_playback_backend.currentText(),
             'tts_bailian_instruction': self.tts_instruction.text().strip(),
             'stt_provider': self.stt_provider.currentText(),
             'stt_language': self.stt_language.currentText(),
