@@ -129,12 +129,21 @@ def judge_reply(
     reply: str,
     gold: list[str],
     model_override: str | None = None,
+    attempts: int = 3,
 ) -> dict[str, Any]:
     messages = build_judge_messages(scenario, reply, gold)
     overrides: dict[str, Any] = {"temperature": 0.0}
     if model_override:
         overrides["model"] = model_override
-    raw = client.chat(messages, overrides)
-    parsed = parse_judge_output(raw)
-    parsed["raw"] = raw
-    return parsed
+    last_error: Exception | None = None
+    for _ in range(max(1, attempts)):
+        try:
+            raw = client.chat(messages, overrides)
+            parsed = parse_judge_output(raw)
+            if parsed["overall"]:
+                parsed["raw"] = raw
+                return parsed
+            last_error = ValueError("judge returned no usable scores")
+        except Exception as exc:  # transient API error or unparseable JSON
+            last_error = exc
+    raise RuntimeError(f"judge failed after {attempts} attempts: {last_error}")
