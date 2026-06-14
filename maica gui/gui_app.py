@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.9.
+"""MAICA GUI v0.11.10.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -49,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.9'
+APP_VERSION = '0.11.10'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -70,6 +70,20 @@ TTS_PROVIDERS = ('auto', 'bailian_cosyvoice', 'windows_sapi', 'system_say', 'off
 TTS_PLAYBACK_BACKENDS = ('auto', 'ffplay', 'mpv', 'paplay', 'aplay', 'afplay', 'powershell', 'pwsh', 'off')
 STT_PROVIDERS = ('auto', 'windows_speech', 'bailian_paraformer', 'off')
 BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
+SECRET_CONFIG_MARKERS = ('key', 'token', 'secret', 'password')
+
+
+def _is_secret_config_key(key: str) -> bool:
+    lowered = str(key or '').lower()
+    return any(marker in lowered for marker in SECRET_CONFIG_MARKERS)
+
+
+def merge_runtime_config(target: dict[str, Any], updates: dict[str, Any]) -> None:
+    """Merge safe GUI snapshots without replacing real secrets by <hidden>."""
+    for key, value in updates.items():
+        if _is_secret_config_key(key) and str(value or '') in {'<hidden>', '***'}:
+            continue
+        target[key] = value
 
 
 def html_escape(text: str) -> str:
@@ -890,6 +904,8 @@ class MainWindow(QMainWindow):
 
         self.input_box = QTextEdit()
         self.input_box.setObjectName('inputBox')
+        self.input_box.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
+        self.input_box.setInputMethodHints(Qt.InputMethodHint.ImhNone)
         self.input_box.setPlaceholderText('Type a message for Monika. Ctrl+Enter to send.')
         self.input_box.setMaximumHeight(92)
         self.input_box.installEventFilter(self)
@@ -1217,7 +1233,7 @@ class MainWindow(QMainWindow):
             self.add_system_message(notice)
         config = payload.get('config')
         if isinstance(config, dict):
-            self.current_config.update(config)
+            merge_runtime_config(self.current_config, config)
         if payload.get('action') == 'save_config':
             self.tts = create_tts(self.current_config)
             self.stt = create_stt(self.current_config)

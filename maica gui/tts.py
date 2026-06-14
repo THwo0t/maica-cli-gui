@@ -53,6 +53,23 @@ def redact_secret(text: str, *secrets: str) -> str:
     return out
 
 
+def compact_tts_error(text: str, *secrets: str) -> str:
+    """Return a short, safe TTS error suitable for the chat UI."""
+    safe = redact_secret(text, *secrets).strip()
+    lowered = safe.lower()
+    if 'invalidapikey' in lowered or 'invalid api-key' in lowered or '401 unauthorized' in lowered:
+        return 'Bailian API key is invalid or expired. Please update tts_bailian_api_key in local config.json.'
+    if 'tts_bailian_api_key is empty' in lowered:
+        return 'tts_bailian_api_key is empty. Please set it in local config.json.'
+    if 'tts_bailian_voice is empty' in lowered:
+        return 'tts_bailian_voice is empty. Please set a Bailian voice id in local config.json.'
+    if 'websocket-client is required' in lowered:
+        return 'websocket-client is required for Bailian CosyVoice TTS.'
+    if len(safe) > 220:
+        safe = safe[:217].rstrip() + '...'
+    return safe or 'Unknown TTS error.'
+
+
 def clean_tts_text(text: str) -> str:
     """Remove stage directions and metadata before sending text to TTS."""
     cleaned_lines: list[str] = []
@@ -112,7 +129,7 @@ class WindowsSapiTTS:
             thread = threading.Thread(target=self._speak_blocking, args=(clean_text,), daemon=True)
             thread.start()
         except Exception as exc:
-            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
+            self.last_error = compact_tts_error(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
             return
 
     def stop(self) -> None:
@@ -176,7 +193,7 @@ class WindowsSapiTTS:
                     pass
             process.wait()
         except Exception as exc:
-            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
+            self.last_error = compact_tts_error(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
             return
         finally:
             with self.lock:
@@ -228,7 +245,7 @@ class SubprocessAudioPlayer:
                 creationflags=creation_flags,
             )
         except Exception as exc:
-            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
+            self.last_error = compact_tts_error(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
             return
         with self.lock:
             self.process = process
@@ -238,7 +255,7 @@ class SubprocessAudioPlayer:
                 return
             if process.returncode not in (0, None):
                 detail = (stderr or stdout or '').strip()
-                self.last_error = f'audio playback failed: {detail or process.returncode}'
+                self.last_error = compact_tts_error(f'audio playback failed: {detail or process.returncode}', self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
         finally:
             with self.lock:
                 if self.process is process:
@@ -368,7 +385,7 @@ class BailianCosyVoiceTTS:
                 return
             self._play_audio(audio_path, generation)
         except Exception as exc:
-            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'))
+            self.last_error = compact_tts_error(str(exc), self.config.get('tts_bailian_api_key'))
 
     def _synthesize_to_wav(self, text: str, generation: int) -> Path | None:
         """Compatibility helper for older smoke tests."""
@@ -576,7 +593,7 @@ class SystemSayTTS:
             thread = threading.Thread(target=self._speak_blocking, args=(command,), daemon=True)
             thread.start()
         except Exception as exc:
-            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
+            self.last_error = compact_tts_error(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
 
     def stop(self) -> None:
         with self.lock:
@@ -604,9 +621,9 @@ class SystemSayTTS:
             with self.lock:
                 still_current = self.process is process
             if still_current and process.returncode not in (0, None):
-                self.last_error = f'system TTS failed: {(stderr or "").strip() or process.returncode}'
+                self.last_error = compact_tts_error(f'system TTS failed: {(stderr or "").strip() or process.returncode}', self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
         except Exception as exc:
-            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
+            self.last_error = compact_tts_error(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
         finally:
             with self.lock:
                 if self.process is process:

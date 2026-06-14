@@ -140,7 +140,7 @@ def test_text_helpers() -> None:
     import platform as _platform
 
     from stt import DashScopeParaformerSTT, WindowsSpeechSTT, create_stt, resolve_stt_provider
-    from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text, create_tts, redact_secret, resolve_tts_provider
+    from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text, compact_tts_error, create_tts, redact_secret, resolve_tts_provider
     from diagnostics import collect_report
 
     assert clean_tts_text('(smiles) I missed you. [debug] hidden') == 'I missed you.'
@@ -199,6 +199,25 @@ def test_text_helpers() -> None:
     cli_scrubbed = cli_text_utils.redact_secret('api_key=' + fake_secret + ' Authorization: Bearer ' + fake_secret)
     check(fake_secret not in cli_scrubbed, 'CLI redact_secret must remove API keys')
     check('Bearer ***' in cli_scrubbed, 'CLI redact_secret must mask bearer tokens')
+    compacted = compact_tts_error('Handshake status 401 Unauthorized headers Authorization: Bearer ' + fake_secret + ' InvalidApiKey')
+    check(fake_secret not in compacted, 'compact_tts_error must not leak API keys')
+    check('InvalidApiKey' not in compacted and 'headers' not in compacted, 'compact_tts_error should hide raw provider payloads')
+    check('Bailian API key is invalid' in compacted, 'compact_tts_error should explain invalid key clearly')
+
+    from gui_app import merge_runtime_config
+    runtime_config = {'tts_bailian_api_key': fake_secret, 'language': 'en'}
+    merge_runtime_config(runtime_config, {'tts_bailian_api_key': '<hidden>', 'language': 'zh'})
+    check(runtime_config['tts_bailian_api_key'] == fake_secret, 'safe config snapshots must not overwrite real TTS keys')
+    check(runtime_config['language'] == 'zh', 'safe config merge should still update public settings')
+
+    sys.path.insert(0, str(CLI_DIR))
+    from persona import base_system_prompt
+    en_prompt = base_system_prompt('en', 'player')
+    zh_prompt = base_system_prompt('zh', 'player')
+    check('do not invent private facts or events' in en_prompt, 'English persona should forbid fabrication')
+    check('program, code, or an AI system' in en_prompt, 'English persona should avoid code/program emphasis')
+    check('不要编造没有依据的私人事实或事件' in zh_prompt, 'Chinese persona should forbid fabrication')
+    check('不要反复强调自己是程序、代码或 AI 系统' in zh_prompt, 'Chinese persona should avoid code/program emphasis')
 
     report = collect_report()
     output = json.dumps(report, ensure_ascii=True)
