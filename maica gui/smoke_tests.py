@@ -136,7 +136,7 @@ def test_text_helpers() -> None:
     sys.path.insert(0, str(GUI_DIR))
     import platform as _platform
 
-    from stt import WindowsSpeechSTT, create_stt, resolve_stt_provider
+    from stt import DashScopeParaformerSTT, WindowsSpeechSTT, create_stt, resolve_stt_provider
     from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text, create_tts, resolve_tts_provider
     from diagnostics import collect_report
 
@@ -165,6 +165,18 @@ def test_text_helpers() -> None:
     # create_tts must never raise for any known provider value.
     for provider in ('auto', 'system_say', 'windows_sapi', 'bailian_cosyvoice', 'off'):
         create_tts({'tts_provider': provider})
+
+    # Bailian Paraformer STT (v0.11.3): selectable, and fails cleanly without a key
+    # (no microphone capture or network when the key is missing).
+    check(isinstance(create_stt({'stt_provider': 'bailian_paraformer'}), DashScopeParaformerSTT),
+          'bailian_paraformer should map to DashScopeParaformerSTT')
+    paraformer_no_key = DashScopeParaformerSTT({'stt_provider': 'bailian_paraformer'}).listen()
+    check(not paraformer_no_key['ok'], 'Paraformer STT without a key should fail cleanly')
+    check('api_key' in paraformer_no_key['error'] or 'websocket' in paraformer_no_key['error'].lower(),
+          'Paraformer STT should explain the missing key or websocket dependency')
+    # The STT key falls back to the TTS Bailian key so one key serves both.
+    check(DashScopeParaformerSTT({'tts_bailian_api_key': 'sk-fallback'})._api_key() == 'sk-fallback',
+          'Paraformer STT should reuse tts_bailian_api_key when stt key is unset')
 
     report = collect_report()
     output = json.dumps(report, ensure_ascii=True)

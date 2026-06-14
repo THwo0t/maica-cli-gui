@@ -136,6 +136,10 @@
   "stt_provider": "auto",
   "stt_language": "en",
   "stt_timeout": 8,
+  "stt_bailian_api_key": "",
+  "stt_bailian_endpoint": "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
+  "stt_bailian_model": "paraformer-realtime-v2",
+  "stt_bailian_timeout": 15,
   "special_events": [
     {
       "date": "01-01",

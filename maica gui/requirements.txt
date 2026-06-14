@@ -3,8 +3,14 @@
 # Required: Qt bindings for the desktop GUI.
 PySide6>=6.7
 
-# Optional: Aliyun Bailian CosyVoice TTS provider (cross-platform, needs API key).
+# Optional: Aliyun Bailian CosyVoice TTS + Paraformer STT providers
+# (cross-platform, need a DashScope API key).
 websocket-client
+
+# Optional: microphone capture for Bailian Paraformer STT (stt_provider = bailian_paraformer).
+# Linux also needs the PortAudio system library (e.g. libportaudio2 / portaudio).
+sounddevice
+numpy
 
 # --- Cross-platform audio / voice notes (not pip-installable) ---
 #

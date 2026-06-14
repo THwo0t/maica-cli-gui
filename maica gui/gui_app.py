@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.2.
+"""MAICA GUI v0.11.3.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -49,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.2'
+APP_VERSION = '0.11.3'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -68,7 +68,7 @@ PLANNER_MODES = ('lite', 'example_only')
 RESPONSE_OUTPUT_MODES = ('dual', 'json', 'legacy_marker')
 TTS_PROVIDERS = ('auto', 'bailian_cosyvoice', 'windows_sapi', 'system_say', 'off')
 TTS_PLAYBACK_BACKENDS = ('auto', 'ffplay', 'mpv', 'paplay', 'aplay', 'afplay', 'powershell', 'pwsh', 'off')
-STT_PROVIDERS = ('auto', 'windows_speech', 'off')
+STT_PROVIDERS = ('auto', 'windows_speech', 'bailian_paraformer', 'off')
 BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
 
 
