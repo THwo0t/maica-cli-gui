@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.4.
+"""MAICA GUI v0.11.5.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap, QRadialGradient, QTextCursor
+from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -40,7 +40,6 @@ from PySide6.QtWidgets import (
     QSizePolicy,
     QSpinBox,
     QTabWidget,
-    QTextBrowser,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -50,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.4'
+APP_VERSION = '0.11.5'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -595,6 +594,137 @@ class BackgroundWidget(QWidget):
         super().paintEvent(event)
 
 
+class MessageBubble(QFrame):
+    """A single rounded, shadowed chat bubble (real widget, not rich text)."""
+
+    def __init__(self, role: str, text: str, name: str = '', meta: str = '') -> None:
+        super().__init__()
+        self.role = role
+        self.setObjectName({
+            'user': 'bubbleUser',
+            'monika': 'bubbleMonika',
+            'system': 'bubbleSystem',
+            'notice': 'bubbleNotice',
+        }.get(role, 'bubbleSystem'))
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 10, 14, 10)
+        layout.setSpacing(3)
+
+        if name:
+            self.name_label = QLabel(name)
+            self.name_label.setObjectName('bubbleName')
+            layout.addWidget(self.name_label)
+
+        self.body_label = QLabel(text)
+        self.body_label.setObjectName('bubbleBody')
+        self.body_label.setWordWrap(True)
+        self.body_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(self.body_label)
+
+        self.meta_label: QLabel | None = None
+        if meta:
+            self.meta_label = QLabel(meta)
+            self.meta_label.setObjectName('bubbleMeta')
+            layout.addWidget(self.meta_label)
+
+        if role in {'user', 'monika'}:
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(22)
+            shadow.setOffset(0, 4)
+            shadow.setColor(QColor(20, 10, 18, 70))
+            self.setGraphicsEffect(shadow)
+
+    def set_body(self, text: str) -> None:
+        self.body_label.setText(text)
+
+    def set_meta(self, meta: str) -> None:
+        if self.meta_label is None:
+            self.meta_label = QLabel(meta)
+            self.meta_label.setObjectName('bubbleMeta')
+            self.layout().addWidget(self.meta_label)
+        else:
+            self.meta_label.setText(meta)
+
+
+class ChatLog(QScrollArea):
+    """Scrollable column of MessageBubble widgets with messenger-style alignment."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName('chatLog')
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.Shape.NoFrame)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._container = QWidget()
+        self._container.setObjectName('chatContainer')
+        self._column = QVBoxLayout(self._container)
+        self._column.setContentsMargins(14, 14, 14, 14)
+        self._column.setSpacing(4)
+        self._column.addStretch(1)
+        self.setWidget(self._container)
+        self._bubbles: list[MessageBubble] = []
+
+    def _add(self, bubble: MessageBubble, align: str) -> None:
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        if align == 'right':
+            row.addStretch(1)
+            row.addWidget(bubble)
+        elif align == 'center':
+            row.addStretch(1)
+            row.addWidget(bubble)
+            row.addStretch(1)
+        else:
+            row.addWidget(bubble)
+            row.addStretch(1)
+        holder = QWidget()
+        holder.setLayout(row)
+        # Insert before the trailing stretch so bubbles stack top-to-bottom.
+        self._column.insertWidget(self._column.count() - 1, holder)
+        self._bubbles.append(bubble)
+        self._apply_width(bubble)
+        QTimer.singleShot(0, self._scroll_to_bottom)
+
+    def _apply_width(self, bubble: MessageBubble) -> None:
+        viewport_width = max(280, self.viewport().width())
+        cap = 0.86 if bubble.role in {'system', 'notice'} else 0.66
+        bubble.setMaximumWidth(int(viewport_width * cap))
+
+    def resizeEvent(self, event: Any) -> None:
+        super().resizeEvent(event)
+        for bubble in self._bubbles:
+            self._apply_width(bubble)
+
+    def _scroll_to_bottom(self) -> None:
+        bar = self.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def add_system(self, text: str) -> None:
+        self._add(MessageBubble('system', text), 'center')
+
+    def add_notice(self, text: str) -> None:
+        self._add(MessageBubble('notice', text), 'center')
+
+    def add_user(self, text: str) -> None:
+        self._add(MessageBubble('user', text, name='You'), 'right')
+
+    def add_monika(self, text: str, meta: str = '') -> None:
+        self._add(MessageBubble('monika', text, name='Monika', meta=meta), 'left')
+
+    def start_stream(self) -> MessageBubble:
+        bubble = MessageBubble('monika', '', name='Monika')
+        self._add(bubble, 'left')
+        return bubble
+
+    def clear(self) -> None:
+        for bubble in self._bubbles:
+            holder = bubble.parentWidget()
+            if holder is not None:
+                holder.setParent(None)
+                holder.deleteLater()
+        self._bubbles.clear()
+
+
 class MainWindow(QMainWindow):
     chat_requested = Signal(str)
     spire_requested = Signal(str)
@@ -641,6 +771,7 @@ class MainWindow(QMainWindow):
         self.idle_timer = QTimer(self)
         self.streaming_active = False
         self.streaming_text = ''
+        self._stream_bubble: MessageBubble | None = None
         self.startup_greeting_shown = False
         self.idle_timer.setInterval(30_000)
         self.idle_timer.timeout.connect(self.check_idle_spire)
@@ -734,11 +865,8 @@ class MainWindow(QMainWindow):
         title.setObjectName('titleLabel')
         right_layout.addWidget(title)
 
-        self.chat_view = QTextBrowser()
-        self.chat_view.setObjectName('chatView')
-        self.chat_view.setOpenExternalLinks(False)
-        self.chat_view.document().setDefaultStyleSheet(CHAT_HTML_STYLE)
-        right_layout.addWidget(self.chat_view, 1)
+        self.chat_log = ChatLog()
+        right_layout.addWidget(self.chat_log, 1)
 
         self.input_box = QTextEdit()
         self.input_box.setObjectName('inputBox')
@@ -775,7 +903,7 @@ class MainWindow(QMainWindow):
         self.settings_button.clicked.connect(self.open_settings)
         self.diagnostics_button.clicked.connect(self.export_diagnostics)
         self.debug_button.clicked.connect(self.toggle_debug_panel)
-        self.clear_button.clicked.connect(self.chat_view.clear)
+        self.clear_button.clicked.connect(self.chat_log.clear)
         button_row.addWidget(self.send_button)
         button_row.addWidget(self.spire_button)
         button_row.addWidget(self.tts_button)
@@ -824,34 +952,25 @@ class MainWindow(QMainWindow):
             self.thread.wait(2000)
         super().closeEvent(event)
 
-    def add_system_message(self, text: str) -> None:
-        self.chat_view.append(f'<div class="system">{html_escape(text)}</div>')
-
-    def add_user_message(self, text: str) -> None:
-        body = '<br>'.join(html_escape(line) for line in text.splitlines() if line.strip())
-        self.chat_view.append(f'<div class="user"><span class="who">You</span><br>{body}</div>')
-
-    def add_monika_message(self, text: str, emotion: str, response_time: Any = '') -> None:
-        lines = '<br>'.join(html_escape(line) for line in text.splitlines() if line.strip())
-        meta = f'{html_escape(emotion or "neutral")}'
+    def _meta_text(self, emotion: str, response_time: Any) -> str:
+        meta = f'♥ {emotion or "neutral"}'
         if response_time != '':
             meta += f' · {response_time}s'
-        self.chat_view.append(
-            f'<div class="monika"><span class="who">Monika</span><br>{lines}'
-            f'<br><span class="meta">{meta}</span></div>'
-        )
+        return meta
 
-    def _insert_chat_html(self, html: str) -> None:
-        cursor = self.chat_view.textCursor()
-        cursor.movePosition(QTextCursor.MoveOperation.End)
-        self.chat_view.setTextCursor(cursor)
-        self.chat_view.insertHtml(html)
-        self.chat_view.ensureCursorVisible()
+    def add_system_message(self, text: str) -> None:
+        self.chat_log.add_system(text)
+
+    def add_user_message(self, text: str) -> None:
+        self.chat_log.add_user(text)
+
+    def add_monika_message(self, text: str, emotion: str, response_time: Any = '') -> None:
+        self.chat_log.add_monika(text, self._meta_text(emotion, response_time))
 
     def _handle_stream_started(self, payload: dict[str, Any]) -> None:
         self.streaming_active = True
         self.streaming_text = ''
-        self._insert_chat_html('<div class="monika"><span class="who">Monika</span><br>')
+        self._stream_bubble = self.chat_log.start_stream()
 
     def _handle_stream_chunk(self, chunk: str) -> None:
         if not self.streaming_active:
@@ -860,15 +979,18 @@ class MainWindow(QMainWindow):
         if not text:
             return
         self.streaming_text += text
-        self._insert_chat_html(html_escape(text).replace('\n', '<br>'))
+        if self._stream_bubble is not None:
+            self._stream_bubble.set_body(self.streaming_text)
+            self.chat_log._scroll_to_bottom()
 
     def _finish_streaming_message(self, emotion: str, response_time: Any = '') -> None:
-        meta = f'{html_escape(emotion or "neutral")}'
-        if response_time != '':
-            meta += f' · {response_time}s'
-        self._insert_chat_html(f'<br><span class="meta">{meta}</span></div><br>')
+        if self._stream_bubble is not None:
+            if self.streaming_text:
+                self._stream_bubble.set_body(self.streaming_text)
+            self._stream_bubble.set_meta(self._meta_text(emotion, response_time))
         self.streaming_active = False
         self.streaming_text = ''
+        self._stream_bubble = None
 
     def set_busy(self, busy: bool) -> None:
         self.send_button.setEnabled(not busy)
@@ -1154,7 +1276,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(1800, self.report_tts_error_if_any)
             QTimer.singleShot(6000, self.report_tts_error_if_any)
         for notice in result.get('mtrigger_notices') or []:
-            self.chat_view.append(f'<div class="notice">{html_escape(str(notice))}</div>')
+            self.chat_log.add_notice(str(notice))
 
     def load_recent_messages_once(self, payload: dict[str, Any]) -> None:
         if getattr(self, '_recent_loaded', False):
@@ -1257,8 +1379,13 @@ QMainWindow {{
 QWidget {{
     font-family: {t['font_stack']};
 }}
-QFrame#leftPanel, QFrame#rightPanel {{
+QFrame#rightPanel {{
     background: {t['panel']};
+    border: 1px solid {t['panel_border']};
+    border-radius: 20px;
+}}
+QFrame#leftPanel {{
+    background: rgba(42, 29, 40, 0.28);
     border: 1px solid {t['panel_border']};
     border-radius: 20px;
 }}
@@ -1283,13 +1410,62 @@ QLabel#contextLabel {{
     border-radius: 12px;
     font-size: 12px;
 }}
-QTextBrowser#chatView {{
+QScrollArea#chatLog {{
     background: {t['cream']};
-    color: {t['ink']};
     border: none;
     border-radius: 16px;
-    padding: 14px;
+}}
+QWidget#chatContainer {{
+    background: transparent;
+}}
+QFrame#bubbleMonika {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #fff4f6, stop:1 #ffe7ee);
+    border: 1px solid rgba(217, 138, 154, 0.30);
+    border-left: 3px solid {t['accent']};
+    border-radius: 16px;
+}}
+QFrame#bubbleUser {{
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {t['accent_hi']}, stop:1 {t['accent_lo']});
+    border: none;
+    border-radius: 16px;
+}}
+QFrame#bubbleSystem {{
+    background: rgba(60, 43, 50, 0.06);
+    border-radius: 12px;
+}}
+QFrame#bubbleNotice {{
+    background: #fbe4e9;
+    border: 1px solid rgba(217, 138, 154, 0.35);
+    border-radius: 12px;
+}}
+QLabel#bubbleName {{
+    font-size: 11px;
+    font-weight: 700;
+    color: {t['accent_lo']};
+}}
+QFrame#bubbleUser QLabel#bubbleName {{
+    color: rgba(255, 247, 245, 0.85);
+}}
+QLabel#bubbleBody {{
     font-size: 15px;
+    color: {t['ink']};
+}}
+QFrame#bubbleUser QLabel#bubbleBody {{
+    color: #fff7f5;
+}}
+QLabel#bubbleMeta {{
+    font-size: 11px;
+    color: {t['muted']};
+}}
+QFrame#bubbleSystem QLabel#bubbleBody {{
+    font-size: 12px;
+    color: {t['muted']};
+}}
+QFrame#bubbleNotice QLabel#bubbleBody {{
+    font-size: 12px;
+    color: #8a5d6a;
 }}
 QTextEdit#inputBox {{
     background: {t['input_bg']};
@@ -1328,12 +1504,14 @@ QPushButton:disabled {{
     color: {t['muted']};
 }}
 QPushButton[btnRole="primary"] {{
-    background: {t['accent']};
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 {t['accent_hi']}, stop:1 {t['accent_lo']});
     color: {t['on_accent']};
     font-weight: 600;
 }}
 QPushButton[btnRole="primary"]:hover {{
-    background: {t['accent_hi']};
+    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+        stop:0 #f0b6c1, stop:1 {t['accent']});
 }}
 QPushButton[btnRole="primary"]:pressed {{
     background: {t['accent_lo']};
@@ -1384,53 +1562,6 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
     background: transparent;
 }}
-"""
-
-
-# Qt's QTextDocument supports only a CSS subset (no border-radius / gradients in
-# rich text), so chat bubbles rely on backgrounds, padding, margins, and a left
-# accent border rather than rounded gradients.
-CHAT_HTML_STYLE = """
-.system {
-    color: #9c838b;
-    margin: 10px 40px;
-    font-size: 12px;
-    text-align: center;
-}
-.user {
-    background: #f3e7ef;
-    color: #3c2b32;
-    margin: 10px 30px 10px 70px;
-    padding: 9px 13px;
-}
-.user .who {
-    color: #9a7d92;
-    font-size: 11px;
-    font-weight: 600;
-}
-.monika {
-    background: #fff3f4;
-    color: #3c2b32;
-    border-left: 3px solid #d98a9a;
-    margin: 10px 70px 10px 30px;
-    padding: 9px 13px;
-}
-.monika .who {
-    color: #c2727f;
-    font-size: 11px;
-    font-weight: 600;
-}
-.monika .meta {
-    color: #b79aa1;
-    font-size: 11px;
-}
-.notice {
-    color: #8a5d6a;
-    background: #fbe9ec;
-    margin: 7px 30px;
-    padding: 6px 10px;
-    font-size: 12px;
-}
 """
 
 
