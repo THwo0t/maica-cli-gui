@@ -34,6 +34,23 @@ META_LINE_PREFIXES = (
 )
 
 
+def redact_secret(text: str, *secrets: str) -> str:
+    """Strip API keys / bearer tokens from text before it is surfaced to the UI.
+
+    WebSocket handshake failures from websocket-client can echo the request
+    headers (including ``Authorization: Bearer <key>``), so any error string
+    derived from an exception must pass through here.
+    """
+    out = str(text or '')
+    for secret in secrets:
+        secret = str(secret or '').strip()
+        if secret and len(secret) >= 6:
+            out = out.replace(secret, '***')
+    out = re.sub(r'(?i)(bearer)\s+\S+', r'\1 ***', out)
+    out = re.sub(r'(?i)(sk-)[A-Za-z0-9._\-]{6,}', r'\1***', out)
+    return out
+
+
 def clean_tts_text(text: str) -> str:
     """Remove stage directions and metadata before sending text to TTS."""
     cleaned_lines: list[str] = []
@@ -349,7 +366,7 @@ class BailianCosyVoiceTTS:
                 return
             self._play_audio(audio_path, generation)
         except Exception as exc:
-            self.last_error = str(exc)
+            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'))
 
     def _synthesize_to_wav(self, text: str, generation: int) -> Path | None:
         """Compatibility helper for older smoke tests."""

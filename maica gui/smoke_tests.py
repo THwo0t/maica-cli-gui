@@ -137,7 +137,7 @@ def test_text_helpers() -> None:
     import platform as _platform
 
     from stt import DashScopeParaformerSTT, WindowsSpeechSTT, create_stt, resolve_stt_provider
-    from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text, create_tts, resolve_tts_provider
+    from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text, create_tts, redact_secret, resolve_tts_provider
     from diagnostics import collect_report
 
     assert clean_tts_text('(smiles) I missed you. [debug] hidden') == 'I missed you.'
@@ -177,6 +177,14 @@ def test_text_helpers() -> None:
     # The STT key falls back to the TTS Bailian key so one key serves both.
     check(DashScopeParaformerSTT({'tts_bailian_api_key': 'sk-fallback'})._api_key() == 'sk-fallback',
           'Paraformer STT should reuse tts_bailian_api_key when stt key is unset')
+
+    # API keys / bearer tokens must never survive into surfaced error text.
+    leak = 'handshake to wss://... failed, headers: Authorization: Bearer sk-secret123456 extra'
+    scrubbed = redact_secret(leak, 'sk-secret123456')
+    check('sk-secret123456' not in scrubbed, 'redact_secret must remove the raw API key')
+    check('Bearer ***' in scrubbed, 'redact_secret must mask the bearer token')
+    check('sk-secret123456' not in redact_secret('error sk-secret123456 boom', ''),
+          'redact_secret must mask sk- tokens even without an explicit secret')
 
     report = collect_report()
     output = json.dumps(report, ensure_ascii=True)

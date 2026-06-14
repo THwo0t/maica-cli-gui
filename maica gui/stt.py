@@ -10,6 +10,8 @@ import time
 import uuid
 from typing import Any
 
+from tts import redact_secret
+
 
 class WindowsSpeechSTT:
     """Small Windows dictation wrapper using PowerShell and System.Speech."""
@@ -154,7 +156,8 @@ class DashScopeParaformerSTT:
                 timeout=net_timeout,
             )
         except Exception as exc:
-            return {'ok': False, 'text': '', 'error': f'Paraformer connection failed: {exc}'}
+            return {'ok': False, 'text': '',
+                    'error': redact_secret(f'Paraformer connection failed: {exc}', api_key)}
 
         try:
             ws.send(json.dumps(self._run_task_payload(task_id, model), ensure_ascii=False))
@@ -168,7 +171,8 @@ class DashScopeParaformerSTT:
 
             return self._collect_text(ws, net_timeout)
         except Exception as exc:
-            return {'ok': False, 'text': '', 'error': f'Paraformer recognition failed: {exc}'}
+            return {'ok': False, 'text': '',
+                    'error': redact_secret(f'Paraformer recognition failed: {exc}', api_key)}
         finally:
             try:
                 ws.close()

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.6.
+"""MAICA GUI v0.11.7.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -49,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.6'
+APP_VERSION = '0.11.7'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -983,10 +983,14 @@ class MainWindow(QMainWindow):
             self._stream_bubble.set_body(self.streaming_text)
             self.chat_log._scroll_to_bottom()
 
-    def _finish_streaming_message(self, emotion: str, response_time: Any = '') -> None:
+    def _finish_streaming_message(self, emotion: str, response_time: Any = '', final_text: str | None = None) -> None:
         if self._stream_bubble is not None:
-            if self.streaming_text:
-                self._stream_bubble.set_body(self.streaming_text)
+            # The streamed text is the raw model output; the engine may have
+            # rewritten it (e.g. language enforcement) or cleaned markers, so
+            # the authoritative final_text wins when provided.
+            body = final_text if final_text is not None else self.streaming_text
+            if body:
+                self._stream_bubble.set_body(body)
             self._stream_bubble.set_meta(self._meta_text(emotion, response_time))
         self.streaming_active = False
         self.streaming_text = ''
@@ -1264,10 +1268,13 @@ class MainWindow(QMainWindow):
         emotion = str(visual_state.get('raw_emotion') or 'neutral')
         self.set_emotion(str(visual_state.get('emotion') or emotion))
         if result.get('streamed') and self.streaming_active:
-            self._finish_streaming_message(emotion, result.get('response_time', ''))
+            # Replace the live-streamed raw text with the engine's final reply
+            # (language-enforced / cleaned), so e.g. a first-turn Chinese stream
+            # is shown as the rewritten English result.
+            self._finish_streaming_message(emotion, result.get('response_time', ''), final_text=reply_text)
         else:
             if self.streaming_active:
-                self._finish_streaming_message(emotion, result.get('response_time', ''))
+                self._finish_streaming_message(emotion, result.get('response_time', ''), final_text=reply_text)
             self.add_monika_message(reply_text, emotion, result.get('response_time', ''))
         self.update_debug_panel(result)
         if self.tts_enabled and reply_text:
