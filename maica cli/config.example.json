@@ -115,7 +115,7 @@
   "gui_quiet_embedding_load": true,
   "gui_background_mode": "auto",
   "tts_enabled": false,
-  "tts_provider": "windows_sapi",
+  "tts_provider": "auto",
   "tts_voice": "",
   "tts_auto_play": true,
   "tts_rate": 0,
@@ -133,7 +133,7 @@
   "tts_bailian_pitch": 1.0,
   "tts_bailian_timeout": 30,
   "tts_bailian_instruction": "Speak naturally and warmly, like a close daily conversation with a little playful softness.",
-  "stt_provider": "windows_speech",
+  "stt_provider": "auto",
   "stt_language": "en",
   "stt_timeout": 8,
   "special_events": [

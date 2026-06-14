@@ -527,7 +527,96 @@ class BailianCosyVoiceTTS:
         return clean_tts_text(text)
 
 
+class SystemSayTTS:
+    """Local offline TTS for macOS (`say`) and Linux (`spd-say` / `espeak-ng`).
+
+    This is the cross-platform counterpart of WindowsSapiTTS: it both
+    synthesizes and speaks in one child process, so it needs no separate audio
+    playback backend and no network or API key.
+    """
+
+    def __init__(self, config: dict[str, Any]) -> None:
+        self.config = config
+        self.process: subprocess.Popen[str] | None = None
+        self.lock = threading.Lock()
+        self.last_error = ''
+
+    def speak(self, text: str) -> None:
+        clean_text = clean_tts_text(text)
+        if not clean_text:
+            return
+        command = self._command(clean_text)
+        if not command:
+            self.last_error = (
+                'No system TTS found. On macOS use `say`; on Linux install '
+                'speech-dispatcher (spd-say) or espeak-ng, or use Bailian CosyVoice.'
+            )
+            return
+        try:
+            self.stop()
+            thread = threading.Thread(target=self._speak_blocking, args=(command,), daemon=True)
+            thread.start()
+        except Exception as exc:
+            self.last_error = str(exc)
+
+    def stop(self) -> None:
+        with self.lock:
+            process = self.process
+            self.process = None
+        if process is None:
+            return
+        try:
+            if process.poll() is None:
+                process.terminate()
+        except Exception:
+            pass
+
+    def _speak_blocking(self, command: list[str]) -> None:
+        try:
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            with self.lock:
+                self.process = process
+            _stdout, stderr = process.communicate()
+            with self.lock:
+                still_current = self.process is process
+            if still_current and process.returncode not in (0, None):
+                self.last_error = f'system TTS failed: {(stderr or "").strip() or process.returncode}'
+        except Exception as exc:
+            self.last_error = str(exc)
+        finally:
+            with self.lock:
+                if self.process is process:
+                    self.process = None
+
+    def _command(self, text: str) -> list[str]:
+        system = platform.system().lower()
+        if system == 'darwin':
+            exe = shutil.which('say')
+            if not exe:
+                return []
+            rate = int(self.config.get('tts_rate', 0) or 0)  # -10..10 -> wpm offset
+            words_per_min = max(120, min(360, 180 + rate * 12))
+            return [exe, '-r', str(words_per_min), text]
+        # Linux / other POSIX
+        spd = shutil.which('spd-say')
+        if spd:
+            # -w waits for completion so the process lifetime matches playback.
+            return [spd, '-w', text]
+        for name in ('espeak-ng', 'espeak'):
+            exe = shutil.which(name)
+            if exe:
+                return [exe, text]
+        return []
+
+
 class NullTTS:
+    last_error = ''
+
     def speak(self, text: str) -> None:
         return
 
@@ -535,10 +624,24 @@ class NullTTS:
         return
 
 
-def create_tts(config: dict[str, Any]) -> WindowsSapiTTS | BailianCosyVoiceTTS | NullTTS:
-    provider = str(config.get('tts_provider') or 'windows_sapi').lower()
+def resolve_tts_provider(config: dict[str, Any]) -> str:
+    """Resolve 'auto' (and empty) to a provider that works on this OS."""
+    provider = str(config.get('tts_provider') or 'auto').lower()
+    if provider not in {'auto', ''}:
+        return provider
+    system = platform.system().lower()
+    if system == 'windows':
+        return 'windows_sapi'
+    # macOS / Linux: prefer a local system voice; Bailian stays an explicit opt-in.
+    return 'system_say'
+
+
+def create_tts(config: dict[str, Any]) -> WindowsSapiTTS | BailianCosyVoiceTTS | SystemSayTTS | NullTTS:
+    provider = resolve_tts_provider(config)
     if provider == 'windows_sapi':
         return WindowsSapiTTS(config)
     if provider in {'bailian_cosyvoice', 'aliyun_bailian', 'cosyvoice'}:
         return BailianCosyVoiceTTS(config)
+    if provider in {'system_say', 'say', 'espeak', 'spd-say'}:
+        return SystemSayTTS(config)
     return NullTTS()

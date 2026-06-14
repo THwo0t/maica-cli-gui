@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import platform
 import subprocess
 from typing import Any
 
@@ -14,6 +15,13 @@ class WindowsSpeechSTT:
         self.config = config
 
     def listen(self) -> dict[str, Any]:
+        if platform.system().lower() != 'windows':
+            return {
+                'ok': False,
+                'text': '',
+                'error': 'Windows Speech STT is only available on Windows. '
+                         'Set stt_provider to off on this OS, or use a cross-platform STT.',
+            }
         timeout = int(self.config.get('stt_timeout', 8) or 8)
         timeout = max(2, min(30, timeout))
         language = str(self.config.get('stt_language') or self.config.get('language') or 'en').lower()
@@ -62,8 +70,17 @@ class NullSTT:
         return {'ok': False, 'text': '', 'error': 'STT provider is disabled.'}
 
 
+def resolve_stt_provider(config: dict[str, Any]) -> str:
+    """Resolve 'auto' (and empty) to a provider that works on this OS."""
+    provider = str(config.get('stt_provider') or 'auto').lower()
+    if provider in {'auto', ''}:
+        # No cross-platform local STT yet, so only Windows has a usable engine.
+        return 'windows_speech' if platform.system().lower() == 'windows' else 'off'
+    return provider
+
+
 def create_stt(config: dict[str, Any]) -> WindowsSpeechSTT | NullSTT:
-    provider = str(config.get('stt_provider') or 'windows_speech').lower()
+    provider = resolve_stt_provider(config)
     if provider == 'windows_speech':
         return WindowsSpeechSTT(config)
     return NullSTT()

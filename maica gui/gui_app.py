@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.1.
+"""MAICA GUI v0.11.2.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -49,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.1'
+APP_VERSION = '0.11.2'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -66,9 +66,9 @@ LANGUAGE_OPTIONS = ('en', 'zh')
 MODE_OPTIONS = ('rule', 'off')
 PLANNER_MODES = ('lite', 'example_only')
 RESPONSE_OUTPUT_MODES = ('dual', 'json', 'legacy_marker')
-TTS_PROVIDERS = ('bailian_cosyvoice', 'windows_sapi', 'off')
+TTS_PROVIDERS = ('auto', 'bailian_cosyvoice', 'windows_sapi', 'system_say', 'off')
 TTS_PLAYBACK_BACKENDS = ('auto', 'ffplay', 'mpv', 'paplay', 'aplay', 'afplay', 'powershell', 'pwsh', 'off')
-STT_PROVIDERS = ('windows_speech', 'off')
+STT_PROVIDERS = ('auto', 'windows_speech', 'off')
 BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
 
 
@@ -497,13 +497,13 @@ class SettingsDialog(QDialog):
         self.auto_memory_summary_enabled.setChecked(bool(config.get('auto_memory_summary_enabled', False)))
         self.auto_memory_summary_turns.setValue(int(config.get('auto_memory_summary_turns') or 24))
         self.tts_enabled.setChecked(bool(config.get('tts_enabled', False)))
-        self._set_combo(self.tts_provider, str(config.get('tts_provider') or 'windows_sapi'))
+        self._set_combo(self.tts_provider, str(config.get('tts_provider') or 'auto'))
         self.tts_model.setText(str(config.get('tts_bailian_model') or ''))
         self.tts_voice.setText(str(config.get('tts_bailian_voice') or ''))
         self._set_combo(self.tts_format, str(config.get('tts_bailian_format') or 'mp3'))
         self._set_combo(self.tts_playback_backend, str(config.get('tts_playback_backend') or 'auto'))
         self.tts_instruction.setText(str(config.get('tts_bailian_instruction') or ''))
-        self._set_combo(self.stt_provider, str(config.get('stt_provider') or 'windows_speech'))
+        self._set_combo(self.stt_provider, str(config.get('stt_provider') or 'auto'))
         self._set_combo(self.stt_language, str(config.get('stt_language') or config.get('language') or 'en'))
         self.stt_timeout.setValue(int(config.get('stt_timeout') or 8))
 
@@ -912,7 +912,7 @@ class MainWindow(QMainWindow):
         self.stt = create_stt(config)
         self.tts_enabled = bool(config.get('tts_enabled', False))
         self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
-        provider = str(config.get('tts_provider') or 'windows_sapi')
+        provider = str(config.get('tts_provider') or 'auto')
         self.add_system_message(f'TTS provider: {provider} · {"on" if self.tts_enabled else "off"}')
         if self.settings_dialog is not None:
             self.settings_dialog.render(self.current_config)
@@ -937,7 +937,10 @@ class MainWindow(QMainWindow):
         self.add_system_message('STT listening...')
 
         def run() -> None:
-            result = self.stt.listen()
+            try:
+                result = self.stt.listen()
+            except Exception as exc:
+                result = {'ok': False, 'text': '', 'error': str(exc)}
             self.stt_finished.emit(result)
 
         threading.Thread(target=run, daemon=True).start()

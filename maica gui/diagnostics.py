@@ -12,6 +12,7 @@ import importlib.util
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -147,7 +148,7 @@ def gh_auth_snapshot() -> dict[str, Any]:
 def collect_report() -> dict[str, Any]:
     return {
         'app': 'MAICA CLI GUI',
-        'diagnostics_version': '0.11.1',
+        'diagnostics_version': '0.11.2',
         'python': {
             'executable': sys.executable,
             'version': sys.version,
@@ -179,7 +180,24 @@ def collect_report() -> dict[str, Any]:
         },
         'tools': {
             'python_version': command_output([sys.executable, '--version']),
-            'powershell': command_output(['powershell', '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()']),
+            **(
+                {'powershell': command_output(['powershell', '-NoProfile', '-Command', '$PSVersionTable.PSVersion.ToString()'])}
+                if platform.system().lower() == 'windows'
+                else {}
+            ),
+            'audio_playback': {
+                'ffplay': bool(shutil.which('ffplay')),
+                'mpv': bool(shutil.which('mpv')),
+                'afplay': bool(shutil.which('afplay')),
+                'paplay': bool(shutil.which('paplay')),
+                'aplay': bool(shutil.which('aplay')),
+            },
+            'system_tts': {
+                'say': bool(shutil.which('say')),
+                'spd-say': bool(shutil.which('spd-say')),
+                'espeak-ng': bool(shutil.which('espeak-ng')),
+                'espeak': bool(shutil.which('espeak')),
+            },
             'gh_auth': gh_auth_snapshot(),
         },
         'config': safe_config_snapshot(),

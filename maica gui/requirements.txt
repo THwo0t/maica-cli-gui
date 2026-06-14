@@ -1,0 +1,22 @@
+# MAICA GUI runtime dependencies.
+
+# Required: Qt bindings for the desktop GUI.
+PySide6>=6.7
+
+# Optional: Aliyun Bailian CosyVoice TTS provider (cross-platform, needs API key).
+websocket-client
+
+# --- Cross-platform audio / voice notes (not pip-installable) ---
+#
+# TTS playback (Bailian CosyVoice writes an audio file, then plays it):
+#   Linux  : install `ffmpeg` (ffplay) or `mpv`
+#   macOS  : `afplay` ships with the OS; ffplay/mpv also work
+#   Windows: PowerShell MediaPlayer is used automatically
+#
+# Local offline TTS (tts_provider = system_say / auto):
+#   macOS  : `say` ships with the OS
+#   Linux  : install `speech-dispatcher` (spd-say) or `espeak-ng`
+#   Windows: System.Speech via PowerShell (tts_provider = windows_sapi)
+#
+# STT (speech-to-text) currently has a Windows-only local engine.
+# On macOS/Linux, stt_provider = auto resolves to off.

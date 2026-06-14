@@ -134,8 +134,10 @@ def test_embedding_service_help() -> None:
 
 def test_text_helpers() -> None:
     sys.path.insert(0, str(GUI_DIR))
-    from stt import create_stt
-    from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text
+    import platform as _platform
+
+    from stt import WindowsSpeechSTT, create_stt, resolve_stt_provider
+    from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text, create_tts, resolve_tts_provider
     from diagnostics import collect_report
 
     assert clean_tts_text('(smiles) I missed you. [debug] hidden') == 'I missed you.'
@@ -148,6 +150,22 @@ def test_text_helpers() -> None:
         check('only available on Windows' in sapi.last_error, 'Windows SAPI should report a clear non-Windows error')
     result = create_stt({'stt_provider': 'off'}).listen()
     check(not result['ok'], 'Null STT should not recognize speech')
+
+    # Cross-platform provider resolution (v0.11.2).
+    is_windows = _platform.system().lower() == 'windows'
+    check(resolve_tts_provider({'tts_provider': 'auto'}) == ('windows_sapi' if is_windows else 'system_say'),
+          'auto TTS provider should resolve per platform')
+    check(resolve_stt_provider({'stt_provider': 'auto'}) == ('windows_speech' if is_windows else 'off'),
+          'auto STT provider should resolve per platform')
+    # The Windows STT engine must degrade gracefully off-Windows instead of raising.
+    win_stt_result = WindowsSpeechSTT({}).listen()
+    if not is_windows:
+        check(not win_stt_result['ok'], 'Windows STT should return a failure dict off-Windows')
+        check('only available on Windows' in win_stt_result['error'], 'Windows STT should explain the platform limit')
+    # create_tts must never raise for any known provider value.
+    for provider in ('auto', 'system_say', 'windows_sapi', 'bailian_cosyvoice', 'off'):
+        create_tts({'tts_provider': provider})
+
     report = collect_report()
     output = json.dumps(report, ensure_ascii=True)
     check('sk-' not in output, 'diagnostics report leaked a likely API key')
