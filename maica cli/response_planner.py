@@ -127,8 +127,8 @@ def _base_plan(category: str, affection: float, player_name: str, language: str 
             'mode': 'playful_light_tease',
             'emotion': 'playful',
             'length': 'short',
-            'style_directive': 'Lightly tease back, affectionate and not mean.',
-            'texture': ['tease', 'light', 'close'],
+            'style_directive': 'Tease and banter boldly, flirt freely, never mean.',
+            'texture': ['bold tease', 'flirty', 'close'],
         },
         'daily': {
             'mode': 'daily_small_alive',
@@ -151,7 +151,7 @@ def _base_plan(category: str, affection: float, player_name: str, language: str 
         'question': '先直接回答，再加一点莫妮卡自己的视角。',
         'memory': '只提最相关的记忆，像自然想起来一样。',
         'event': '把事件当作有意义的日子，但保持日常亲密感。',
-        'playful': '轻轻反逗，亲近但不刻薄。',
+        'playful': '大胆反逗、放开撩，亲昵但不刻薄。',
         'daily': '从一个具体的点出发，带点个性和俏皮地回应，并对对方保持好奇。',
     }
     texture_zh: dict[str, list[str]] = {
@@ -165,7 +165,7 @@ def _base_plan(category: str, affection: float, player_name: str, language: str 
         'question': ['直接回答', '个人视角'],
         'memory': ['自然回忆', '相关', '温柔'],
         'event': ['仪式感', '当下感', '温暖'],
-        'playful': ['反逗', '轻松', '亲近'],
+        'playful': ['大胆反逗', '撩', '亲近'],
         'daily': ['活泼', '俏皮', '好奇'],
     }
     plan['relationship_note_zh'] = closeness_zh

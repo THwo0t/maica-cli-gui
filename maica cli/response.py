@@ -107,7 +107,19 @@ def clean_dialogue_text(text: str) -> tuple[str, list[str]]:
             return ''
         return match.group(0) if content else ''
 
-    text = re.sub(r'\[([^\[\]\n]{1,40})\]', collect, text)
+    def collect_bracket(match: re.Match[str]) -> str:
+        # Square brackets are reserved for metadata/stage directions, never
+        # dialogue, so strip them all. Keep only the player placeholder, which
+        # is substituted with the username downstream.
+        content = match.group(1).strip()
+        if not content:
+            return ''
+        if content.lower() == 'player':
+            return match.group(0)
+        removed.append(content)
+        return ''
+
+    text = re.sub(r'\[([^\[\]\n]{1,40})\]', collect_bracket, text)
     text = re.sub(r'（([^（）\n]{1,60})）', collect, text)
     text = re.sub(r'\(([^()\n]{1,60})\)', collect, text)
 
