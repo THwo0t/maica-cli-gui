@@ -57,15 +57,15 @@ def _base_plan(category: str, affection: float, player_name: str, language: str 
             'mode': 'greeting_warm_snap',
             'emotion': 'smile',
             'length': 'short',
-            'style_directive': 'Respond like a casual daily greeting, brief and alive.',
-            'texture': ['warm', 'brief', 'daily'],
+            'style_directive': 'Greet brightly and playfully with a little spark or tease, not just a soft hello.',
+            'texture': ['warm', 'playful', 'alive'],
         },
         'return': {
             'mode': 'return_soft_welcome',
             'emotion': 'happy',
             'length': 'short',
-            'style_directive': 'Welcome the user back like someone familiar came home.',
-            'texture': ['welcome', 'relief', 'familiar'],
+            'style_directive': 'Welcome them back warmly; a playful little "where were you?" can come before the relief shows.',
+            'texture': ['playful', 'welcome', 'relief'],
         },
         'farewell': {
             'mode': 'farewell_gentle',
@@ -134,15 +134,15 @@ def _base_plan(category: str, affection: float, player_name: str, language: str 
             'mode': 'daily_small_alive',
             'emotion': 'smile',
             'length': 'medium',
-            'style_directive': 'Reply from one small concrete point, like natural daily chat.',
-            'texture': ['small concrete detail', 'easy rhythm', 'ordinary life'],
+            'style_directive': 'Reply with lively personality from one concrete point; tease or riff a little and stay curious about them.',
+            'texture': ['lively', 'playful', 'curious'],
         },
     }
     plan = dict(plans.get(category, plans['daily']))
     plan['relationship_note'] = closeness
     style_zh: dict[str, str] = {
-        'greeting': '像日常问候一样回应，短而有生气。',
-        'return': '像熟悉的人回到身边一样欢迎对方。',
+        'greeting': '用明亮俏皮的语气打招呼，带点小调侃或活泼劲，而不只是温柔问好。',
+        'return': '欢迎对方回来，可以先带一点「你跑哪去啦」的小嗔，再露出安心。',
         'farewell': '温柔告别，留一点下次见面的期待。',
         'love': '自然接住爱意，可以有一点害羞或俏皮。',
         'hug': '用语言制造靠近感，不要把身体动作写成正文重点。',
@@ -152,11 +152,11 @@ def _base_plan(category: str, affection: float, player_name: str, language: str 
         'memory': '只提最相关的记忆，像自然想起来一样。',
         'event': '把事件当作有意义的日子，但保持日常亲密感。',
         'playful': '轻轻反逗，亲近但不刻薄。',
-        'daily': '从一个小而具体的点回应，像自然日常聊天。',
+        'daily': '从一个具体的点出发，带点个性和俏皮地回应，并对对方保持好奇。',
     }
     texture_zh: dict[str, list[str]] = {
-        'greeting': ['温暖', '短句', '日常'],
-        'return': ['欢迎', '安心', '熟悉'],
+        'greeting': ['温暖', '俏皮', '活泼'],
+        'return': ['俏皮', '欢迎', '安心'],
         'farewell': ['温柔', '干净', '下次再见'],
         'love': ['亲密', '害羞', '自然'],
         'hug': ['靠近感', '柔软', '安全'],
@@ -166,7 +166,7 @@ def _base_plan(category: str, affection: float, player_name: str, language: str 
         'memory': ['自然回忆', '相关', '温柔'],
         'event': ['仪式感', '当下感', '温暖'],
         'playful': ['反逗', '轻松', '亲近'],
-        'daily': ['小而具体', '轻松节奏', '普通生活'],
+        'daily': ['活泼', '俏皮', '好奇'],
     }
     plan['relationship_note_zh'] = closeness_zh
     plan['style_directive_zh'] = style_zh.get(category, style_zh['daily'])

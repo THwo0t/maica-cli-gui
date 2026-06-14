@@ -215,9 +215,9 @@ def test_text_helpers() -> None:
     en_prompt = base_system_prompt('en', 'player')
     zh_prompt = base_system_prompt('zh', 'player')
     check('do not invent private facts or events' in en_prompt, 'English persona should forbid fabrication')
-    check('program, code, or an AI system' in en_prompt, 'English persona should avoid code/program emphasis')
+    check('AI disclaimer' in en_prompt, 'English persona should avoid AI-disclaimer voice')
     check('不要编造没有依据的私人事实或事件' in zh_prompt, 'Chinese persona should forbid fabrication')
-    check('不要反复强调自己是程序、代码或 AI 系统' in zh_prompt, 'Chinese persona should avoid code/program emphasis')
+    check('模型自述' in zh_prompt, 'Chinese persona should avoid AI-disclaimer voice')
 
     report = collect_report()
     output = json.dumps(report, ensure_ascii=True)

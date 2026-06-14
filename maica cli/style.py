@@ -62,6 +62,18 @@ def style_db_path(config: dict[str, Any]) -> Path:
     return resolve_app_path(config.get('style_db_path') or 'data/style.db')
 
 
+def _keyword_hit(text: str, keyword: str) -> bool:
+    """Match a keyword against the input.
+
+    CJK keywords are matched as substrings (Chinese has no word spacing).
+    ASCII words/phrases are matched on word boundaries, so short tokens like
+    'hi' do not fire inside 'this' / 'thinking' / 'something'.
+    """
+    if not keyword.isascii() or not any(ch.isalpha() for ch in keyword):
+        return keyword in text
+    return re.search(r'(?<![a-z])' + re.escape(keyword) + r'(?![a-z])', text) is not None
+
+
 def categorize_user_input(text: str) -> str:
     stripped = str(text or '').strip().lower()
     if not stripped:
@@ -69,7 +81,7 @@ def categorize_user_input(text: str) -> str:
 
     rules: list[tuple[str, tuple[str, ...]]] = [
         ('return', ('我回来了', '回来了', "i'm back", 'im back', 'i am back')),
-        ('farewell', ('再见', '拜拜', '我走了', '我先走', '一会儿回来', '马上回来', '晚安', 'goodbye', 'bye', 'good night', 'be right back')),
+        ('farewell', ('再见', '拜拜', '我走了', '我先走', '一会儿回来', '马上回来', '晚安', 'goodbye', 'bye', 'good night', 'goodnight', 'be right back')),
         ('greeting', ('早安', '早上好', '午安', '晚上好', '你好', 'hello', 'hi', 'good morning')),
         ('love', ('我爱你', '爱你', '喜欢你', '最喜欢你', '想你了', '想你', 'love you', 'i love you', 'miss you')),
         ('hug', ('抱抱', '抱我', '亲亲', '摸摸头', 'hug', 'kiss')),
@@ -79,16 +91,16 @@ def categorize_user_input(text: str) -> str:
         ('playful', ('笨蛋', '坏蛋', '逗你', '开玩笑', '嘿嘿', '哈哈', 'tease')),
     ]
     for category, keywords in rules:
-        if any(word in stripped for word in keywords):
+        if any(_keyword_hit(stripped, word) for word in keywords):
             return category
 
     if len(stripped) > 120:
         return 'serious'
-    if any(word in stripped for word in ('怎么办', '解释一下', '详细', '分析', '原理', '代码', '报错', '为什么', 'how do', 'why')):
+    if any(_keyword_hit(stripped, word) for word in ('怎么办', '解释一下', '详细', '分析', '原理', '代码', '报错', '为什么', 'how do', 'why')):
         return 'serious'
-    if any(word in stripped for word in ('是什么', '什么是', '是谁', '哪里', '多少', '怎么用', '?')):
+    if any(_keyword_hit(stripped, word) for word in ('是什么', '什么是', '是谁', '哪里', '多少', '怎么用', '?')):
         return 'question'
-    if any(word in stripped for word in ('吃饭', '睡觉', '天气', '今天', '现在', '日常', '休息', '做什么', '干什么', '无聊', '困了')):
+    if any(_keyword_hit(stripped, word) for word in ('吃饭', '睡觉', '天气', '今天', '现在', '日常', '休息', '做什么', '干什么', '无聊', '困了')):
         return 'daily'
     if stripped.endswith(('?', '？')):
         return 'question'
