@@ -99,7 +99,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "auto_memory_summary_turns": 24,
     "auto_memory_summary_min_messages": 8,
     "auto_memory_summary_max_messages": 40,
-    "memory_vector_auto_rebuild": False,
+    "memory_vector_auto_rebuild": True,
     "affection_min": -100.0,
     "affection_max": 10_000.0,
     "affection_daily_positive_cap": 12.0,

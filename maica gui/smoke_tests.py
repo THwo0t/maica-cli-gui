@@ -198,6 +198,53 @@ def test_engine_fake_chat() -> None:
             engine.close()
 
 
+def test_engine_fake_stream() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from engine import MaicaEngine
+
+    class FakeStreamClient:
+        def chat_stream(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None):
+            assert messages
+            yield '[smile] Hello'
+            yield ' there.'
+
+        def chat_with_usage(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+            raise AssertionError('streaming fake should not use non-stream fallback')
+
+        def chat(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> str:
+            return '{}'
+
+    with tempfile.TemporaryDirectory(prefix='maica-stream-smoke-') as temp_dir:
+        config = dict(DEFAULT_CONFIG)
+        config.update(
+            {
+                'api_key_required': False,
+                'jsonl_logs_enabled': False,
+                'streaming_enabled': True,
+                'metadata_extract_enabled': False,
+                'mtrigger_mode': 'off',
+                'embedding_enabled': False,
+                'memory_embedding_enabled': False,
+                'embedding_service_enabled': False,
+                'style_enabled': False,
+                'show_debug': False,
+            }
+        )
+        engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'stream.db', app_dir=CLI_DIR)
+        engine.client = FakeStreamClient()
+        chunks: list[str] = []
+        try:
+            result = engine.chat('hello', stream_callback=chunks.append)
+            check(result['ok'], result.get('error', 'fake stream failed'))
+            check(result.get('streamed') is True, 'fake stream did not mark streamed')
+            check(chunks == ['[smile] Hello', ' there.'], 'stream chunks mismatch')
+            check(result['text'] == 'Hello there.', 'stream parsed text mismatch')
+            check(result['emotion'] == 'smile', 'stream emotion mismatch')
+        finally:
+            engine.close()
+
+
 def test_engine_language_rewrite() -> None:
     sys.path.insert(0, str(CLI_DIR))
     from config_defaults import DEFAULT_CONFIG
@@ -477,6 +524,8 @@ def main() -> int:
     print('text_helpers ok')
     test_engine_fake_chat()
     print('engine_fake_chat ok')
+    test_engine_fake_stream()
+    print('engine_fake_stream ok')
     test_engine_language_rewrite()
     print('engine_language_rewrite ok')
     test_prompt_language_systems()

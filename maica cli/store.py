@@ -14,7 +14,7 @@ from persona import relationship_stage
 from text_utils import split_query_tokens
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 PROFILE_DEFAULTS = {
     'player_name': 'player',
@@ -40,6 +40,7 @@ class Store:
         self.ensure_schema()
 
     def ensure_schema(self) -> None:
+        old_version = int(self.conn.execute('PRAGMA user_version').fetchone()[0] or 0)
         self.conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS profile (
@@ -96,8 +97,14 @@ class Store:
                 estimated_cost REAL DEFAULT 0,
                 created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS schema_migrations (
+                version INTEGER PRIMARY KEY,
+                applied_at TEXT NOT NULL,
+                note TEXT DEFAULT ''
+            );
             """
         )
+        self.run_migrations(old_version)
         for key, value in PROFILE_DEFAULTS.items():
             self.conn.execute(
                 'INSERT OR IGNORE INTO profile(key, value) VALUES (?, ?)',
@@ -105,6 +112,24 @@ class Store:
             )
         self.conn.execute(f'PRAGMA user_version = {SCHEMA_VERSION}')
         self.conn.commit()
+
+    def run_migrations(self, old_version: int) -> None:
+        """Apply small idempotent migrations for older local databases."""
+        if old_version < 3:
+            self.conn.executescript(
+                """
+                CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
+                CREATE INDEX IF NOT EXISTS idx_memories_updated ON memories(updated_at);
+                CREATE INDEX IF NOT EXISTS idx_facts_updated ON facts(updated_at);
+                CREATE INDEX IF NOT EXISTS idx_events_type_created ON events(type, created_at);
+                CREATE INDEX IF NOT EXISTS idx_summaries_source_end ON summaries(source_end_id);
+                """
+            )
+        if old_version < SCHEMA_VERSION:
+            self.conn.execute(
+                'INSERT OR REPLACE INTO schema_migrations(version, applied_at, note) VALUES (?, ?, ?)',
+                (SCHEMA_VERSION, self.now(), f'upgraded from {old_version}'),
+            )
 
     def close(self) -> None:
         self.conn.close()
@@ -212,7 +237,24 @@ class Store:
             (text.strip(), tags, int(importance), now, now),
         )
         self.conn.commit()
-        return int(cur.lastrowid)
+        memory_id = int(cur.lastrowid)
+        self.add_event('memory_added', {'memory_id': memory_id})
+        self.mark_memory_vector_dirty('memory_added', memory_id)
+        return memory_id
+
+    def mark_memory_vector_dirty(self, reason: str, memory_id: int = 0) -> None:
+        self.set_profile_value('memory_vector_dirty', '1')
+        self.set_profile_value('memory_vector_dirty_reason', reason)
+        if memory_id:
+            self.set_profile_value('memory_vector_dirty_id', str(memory_id))
+
+    def clear_memory_vector_dirty(self) -> None:
+        self.set_profile_value('memory_vector_dirty', '0')
+        self.set_profile_value('memory_vector_dirty_reason', '')
+        self.set_profile_value('memory_vector_dirty_id', '')
+
+    def memory_vector_dirty(self) -> bool:
+        return self.get_profile_value('memory_vector_dirty', '0') == '1'
 
     def _score_rows(self, rows: list[sqlite3.Row], query: str, fields: tuple[str, ...], limit: int) -> list[sqlite3.Row]:
         tokens = split_query_tokens(query) or [query.lower()]
@@ -243,6 +285,7 @@ class Store:
         deleted = cur.rowcount > 0
         if deleted:
             self.add_event('memory_deleted', {'memory_id': memory_id})
+            self.mark_memory_vector_dirty('memory_deleted', memory_id)
         return deleted
 
     def update_memory_text(self, memory_id: int, text: str) -> bool:
@@ -254,6 +297,7 @@ class Store:
         updated = cur.rowcount > 0
         if updated:
             self.add_event('memory_edited', {'memory_id': memory_id})
+            self.mark_memory_vector_dirty('memory_edited', memory_id)
         return updated
 
     def update_memory_tags(self, memory_id: int, tags: str) -> bool:
@@ -265,6 +309,7 @@ class Store:
         updated = cur.rowcount > 0
         if updated:
             self.add_event('memory_tags_updated', {'memory_id': memory_id, 'tags': tags})
+            self.mark_memory_vector_dirty('memory_tags_updated', memory_id)
         return updated
 
     def update_memory_importance(self, memory_id: int, importance: int) -> bool:
@@ -277,6 +322,7 @@ class Store:
         updated = cur.rowcount > 0
         if updated:
             self.add_event('memory_importance_updated', {'memory_id': memory_id, 'importance': importance})
+            self.mark_memory_vector_dirty('memory_importance_updated', memory_id)
         return updated
 
     def clear_memories(self) -> int:
@@ -285,6 +331,7 @@ class Store:
         self.conn.commit()
         deleted = cur.rowcount
         self.add_event('memories_cleared', {'count': deleted})
+        self.mark_memory_vector_dirty('memories_cleared')
         return deleted
 
     def add_fact(self, text: str, category: str = 'custom', source: str = 'user', importance: int = 2) -> int:

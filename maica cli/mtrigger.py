@@ -8,6 +8,8 @@ API calls.
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 import re
 from typing import Any
 
@@ -119,7 +121,42 @@ def rule_mtrigger_actions(user_input: str) -> list[dict[str, Any]]:
     return actions
 
 
-def apply_actions(store: Store, actions: list[dict[str, Any]], source: str) -> list[str]:
+def _daily_affection_used(store: Store, source: str = 'rule') -> float:
+    today = dt.date.today().isoformat()
+    total = 0.0
+    try:
+        rows = store.conn.execute(
+            "SELECT payload FROM events WHERE type = 'mtrigger_affection' AND created_at >= ?",
+            (today,),
+        ).fetchall()
+    except Exception:
+        return 0.0
+    for row in rows:
+        try:
+            payload = json.loads(row['payload'])
+        except (TypeError, json.JSONDecodeError, KeyError):
+            continue
+        if source and str(payload.get('source') or '') != source:
+            continue
+        try:
+            total += float(payload.get('delta') or 0.0)
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
+def _cap_daily_delta(store: Store, config: dict[str, Any], delta: float, source: str) -> float:
+    if not delta:
+        return 0.0
+    used = _daily_affection_used(store, source)
+    if delta > 0:
+        cap = float(config.get('affection_daily_positive_cap', 12.0))
+        return max(0.0, min(delta, cap - max(0.0, used)))
+    cap = float(config.get('affection_daily_negative_cap', -12.0))
+    return min(0.0, max(delta, cap - min(0.0, used)))
+
+
+def apply_actions(store: Store, actions: list[dict[str, Any]], source: str, config: dict[str, Any] | None = None) -> list[str]:
     notices = []
     for action in actions:
         action_type = str(action.get('type') or '')
@@ -129,9 +166,14 @@ def apply_actions(store: Store, actions: list[dict[str, Any]], source: str) -> l
             except (TypeError, ValueError):
                 continue
             delta = max(-3.0, min(3.0, delta))
+            if config is not None:
+                delta = _cap_daily_delta(store, config, delta, source)
             if not delta:
+                store.add_event('mtrigger_affection_cap', {'source': source, 'reason': action.get('reason') or source})
                 continue
-            new_value = store.set_affection(store.affection() + delta)
+            minimum = float(config.get('affection_min', -100.0)) if config is not None else -100.0
+            maximum = float(config.get('affection_max', 10_000.0)) if config is not None else 10_000.0
+            new_value = store.set_affection(store.affection() + delta, minimum, maximum)
             reason = str(action.get('reason') or source)
             store.add_event('mtrigger_affection', {'delta': delta, 'reason': reason, 'source': source})
             sign = '+' if delta > 0 else ''
@@ -171,4 +213,4 @@ def apply_mtrigger(
     if mode == 'off':
         return []
     actions = rule_mtrigger_actions(user_input)
-    return apply_actions(store, actions, 'rule')
+    return apply_actions(store, actions, 'rule', config)

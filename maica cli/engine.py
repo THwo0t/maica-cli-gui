@@ -7,11 +7,13 @@ import datetime as dt
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from client import OpenAICompatibleClient
 from config_defaults import DEFAULT_CONFIG
 from config_io import load_json
+from embedding_index import build_memory_vector_index
+from embedding_service_client import build_service_memory_index
 from mfocus import build_messages, build_spire_messages
 from mfocus import special_events_for_today
 from mtrigger import apply_mtrigger
@@ -196,11 +198,11 @@ class MaicaEngine:
                 self.store.add_event("affection_event_bonus", {"events": [event["name"] for event in events], "delta": bonus})
                 self.store.set_profile_value(key, "done")
 
-    def chat(self, user_input: str) -> dict[str, Any]:
+    def chat(self, user_input: str, stream_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
         started = time.time()
         try:
             messages, mfocus_plan = build_messages(self.store, self.config, user_input, self.client)
-            raw_reply, usage = self._call_chat(messages, "chat")
+            raw_reply, usage, streamed = self._call_chat(messages, "chat", stream_callback)
             parsed = parse_assistant_response(raw_reply)
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
@@ -224,6 +226,9 @@ class MaicaEngine:
                 },
             )
             mtrigger_notices = apply_mtrigger(self.store, self.config, self.client, user_input, reply)
+            vector_notice = self._auto_refresh_memory_vectors()
+            if vector_notice:
+                mtrigger_notices.append(vector_notice)
             if summary_notice:
                 mtrigger_notices.append(summary_notice)
             response_time = round(time.time() - started, 3)
@@ -239,6 +244,7 @@ class MaicaEngine:
                     "mtrigger_notices": mtrigger_notices,
                     "raw_reply": parsed["raw"],
                     "usage": usage,
+                    "streamed": streamed,
                     "response_time": response_time,
                 },
                 self.app_dir,
@@ -255,6 +261,7 @@ class MaicaEngine:
                 "mtrigger_notices": mtrigger_notices,
                 "raw_reply": parsed["raw"],
                 "usage": usage,
+                "streamed": streamed,
                 "response_time": response_time,
                 "debug": {"mfocus_plan": compact_debug_plan(mfocus_plan)},
                 "error": "",
@@ -271,12 +278,13 @@ class MaicaEngine:
                 "mfocus_plan": {},
                 "mtrigger_notices": [],
                 "raw_reply": "",
+                "streamed": False,
                 "response_time": round(time.time() - started, 3),
                 "debug": {},
                 "error": str(exc),
             }
 
-    def spire(self, hint: str = "") -> dict[str, Any]:
+    def spire(self, hint: str = "", stream_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
         started = time.time()
         try:
             spire_topic = choose_spire_topic(self.store, self.config, hint)
@@ -289,7 +297,7 @@ class MaicaEngine:
                 spire_topic["topic_id"],
                 spire_topic.get("wiki", {}),
             )
-            raw_reply, usage = self._call_chat(messages, "spire")
+            raw_reply, usage, streamed = self._call_chat(messages, "spire", stream_callback)
             parsed = parse_assistant_response(raw_reply)
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
@@ -348,6 +356,7 @@ class MaicaEngine:
                 "mtrigger_notices": [],
                 "raw_reply": parsed["raw"],
                 "usage": usage,
+                "streamed": streamed,
                 "response_time": response_time,
                 "debug": {
                     "spire_topic": spire_topic,
@@ -367,20 +376,56 @@ class MaicaEngine:
                 "mfocus_plan": {},
                 "mtrigger_notices": [],
                 "raw_reply": "",
+                "streamed": False,
                 "response_time": round(time.time() - started, 3),
                 "debug": {},
                 "error": str(exc),
             }
 
-    def _call_chat(self, messages: list[dict[str, str]], source: str) -> tuple[str, dict[str, Any]]:
+    def _auto_refresh_memory_vectors(self) -> str:
+        if not self.config.get('memory_vector_auto_rebuild', True):
+            return ''
+        if not self.config.get('memory_embedding_enabled', False):
+            return ''
+        if not self.store.memory_vector_dirty():
+            return ''
+        if self.config.get('embedding_service_enabled', False):
+            try:
+                result = build_service_memory_index(self.config)
+                return f'Memory vector index rebuilt by service ({result.get("count", 0)} memories).'
+            except Exception as exc:
+                return f'Memory vector rebuild pending; service failed: {exc}'
+        if self.config.get('gui_disable_thread_embeddings', False):
+            return 'Memory vector index marked dirty. Enable embedding service or rebuild from CLI.'
+        try:
+            result = build_memory_vector_index(self.store, self.config)
+            self.store.clear_memory_vector_dirty()
+            self.store.add_event('memory_vector_rebuilt', {'count': result.get('count'), 'mode': 'engine'})
+            return f'Memory vector index rebuilt ({result.get("count", 0)} memories).'
+        except Exception as exc:
+            return f'Memory vector rebuild pending: {exc}'
+
+    def _call_chat(
+        self,
+        messages: list[dict[str, str]],
+        source: str,
+        stream_callback: Callable[[str], None] | None = None,
+    ) -> tuple[str, dict[str, Any], bool]:
         usage: dict[str, Any] = {}
         if self.config.get("streaming_enabled", False):
+            chunks: list[str] = []
             try:
-                chunks = list(self.client.chat_stream(messages))
+                for chunk in self.client.chat_stream(messages):
+                    if not chunk:
+                        continue
+                    chunks.append(chunk)
+                    if stream_callback is not None:
+                        stream_callback(chunk)
                 if chunks:
-                    return "".join(chunks).strip(), usage
+                    return "".join(chunks).strip(), usage, True
             except Exception:
-                pass
+                if chunks:
+                    return "".join(chunks).strip(), usage, True
         result = self.client.chat_with_usage(messages)
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
         if self.config.get("token_stats_enabled", True):
@@ -395,7 +440,7 @@ class MaicaEngine:
                 )
             except Exception:
                 pass
-        return str(result.get("content") or ""), usage
+        return str(result.get("content") or ""), usage, False
 
     def _call_aux(self, messages: list[dict[str, str]], source: str, overrides: dict[str, Any] | None = None) -> str:
         """Auxiliary model call (metadata, rewrite) with token accounting."""

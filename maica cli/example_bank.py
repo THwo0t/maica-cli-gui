@@ -385,6 +385,7 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
     limit = max(0, min(5, _safe_int(config.get('example_bank_limit'), 3)))
     min_quality = _safe_int(config.get('example_bank_min_quality'), 4)
     min_score = _safe_float(config.get('example_bank_min_score'), 150.0)
+    weight = max(0.0, min(2.0, _safe_float(config.get('example_bank_weight'), 0.65)))
     max_len = _safe_int(config.get('example_bank_max_assistant_length'), 220)
     query_text = build_query_retrieval_text(user_input, response_plan)
     vector_limit = max(limit * 4, _safe_int(config.get('embedding_top_k'), 30))
@@ -414,7 +415,10 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
             continue
         item = dict(item)
         item['retrieval_text'] = str(item.get('retrieval_text') or '').strip() or build_retrieval_text(item)
-        score, debug = score_example(item, user_input, response_plan)
+        raw_score, debug = score_example(item, user_input, response_plan)
+        score = raw_score * weight
+        debug['raw_score'] = raw_score
+        debug['weight'] = weight
         vector_score = item.get('_vector_score')
         if vector_score is not None:
             score += float(vector_score) * 80
@@ -448,6 +452,7 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
         'scored_count': len(scored),
         'example_count': len(selected),
         'min_score': min_score,
+        'weight': weight,
         'vector_error': vector_error,
         'selected_intents': [item.get('example_intent') or item.get('intent') for item in selected],
         'selected_scores': [item.get('score') for item in selected],
@@ -464,9 +469,9 @@ def format_examples_for_prompt(examples: list[dict[str, Any]], language: str = '
         return ''
     english = str(language or '').lower().startswith('en')
     lines = (
-        ['Reference examples for rhythm and intimacy only. Do not reuse exact wording.']
+        ["Low-weight rhythm references. Keep the reply natural and in Monika's own voice."]
         if english
-        else ['参考样例只用于节奏、亲密度和语气，不要照抄原句。']
+        else ['低权重节奏参考。保持回复自然，用莫妮卡自己的语气。']
     )
     for index, item in enumerate(examples[:5], start=1):
         user = str(item.get('user') or '').strip()

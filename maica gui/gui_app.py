@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.10.4.1.
+"""MAICA GUI v0.11.1.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -49,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.10.4.1'
+APP_VERSION = '0.11.1'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -598,6 +598,7 @@ class MainWindow(QMainWindow):
     fact_delete_requested = Signal(int)
     debug_export_requested = Signal(str)
     user_data_export_requested = Signal(str)
+    user_data_preview_requested = Signal(str)
     user_data_import_requested = Signal(str, bool)
     summarize_memory_requested = Signal()
     config_save_requested = Signal(dict)
@@ -629,6 +630,9 @@ class MainWindow(QMainWindow):
         self.last_user_activity = dt.datetime.now()
         self.idle_spire_sent = False
         self.idle_timer = QTimer(self)
+        self.streaming_active = False
+        self.streaming_text = ''
+        self.startup_greeting_shown = False
         self.idle_timer.setInterval(30_000)
         self.idle_timer.timeout.connect(self.check_idle_spire)
 
@@ -650,6 +654,8 @@ class MainWindow(QMainWindow):
         self.worker.ready.connect(self._handle_ready)
         self.worker.status.connect(self.add_system_message)
         self.worker.finished.connect(self._handle_result)
+        self.worker.stream_started.connect(self._handle_stream_started)
+        self.worker.stream_chunk.connect(self._handle_stream_chunk)
         self.worker.config_ready.connect(self._handle_config_ready)
         self.worker.data_ready.connect(self._handle_data_ready)
         self.chat_requested.connect(self.worker.chat)
@@ -663,6 +669,7 @@ class MainWindow(QMainWindow):
         self.fact_delete_requested.connect(self.worker.delete_fact)
         self.debug_export_requested.connect(self.worker.export_debug)
         self.user_data_export_requested.connect(self.worker.export_user_data)
+        self.user_data_preview_requested.connect(self.worker.preview_import)
         self.user_data_import_requested.connect(self.worker.import_user_data)
         self.summarize_memory_requested.connect(self.worker.summarize_memory)
         self.config_save_requested.connect(self.worker.save_config)
@@ -801,6 +808,35 @@ class MainWindow(QMainWindow):
         if response_time != '':
             meta += f' [time: {response_time}s]'
         self.chat_view.append(f'<div class="monika"><b>monika</b><br>{lines}<br><span>{meta}</span></div>')
+
+    def _insert_chat_html(self, html: str) -> None:
+        cursor = self.chat_view.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.chat_view.setTextCursor(cursor)
+        self.chat_view.insertHtml(html)
+        self.chat_view.ensureCursorVisible()
+
+    def _handle_stream_started(self, payload: dict[str, Any]) -> None:
+        self.streaming_active = True
+        self.streaming_text = ''
+        self._insert_chat_html('<div class="monika"><b>monika</b><br>')
+
+    def _handle_stream_chunk(self, chunk: str) -> None:
+        if not self.streaming_active:
+            self._handle_stream_started({'source': 'chat'})
+        text = str(chunk or '')
+        if not text:
+            return
+        self.streaming_text += text
+        self._insert_chat_html(html_escape(text).replace('\n', '<br>'))
+
+    def _finish_streaming_message(self, emotion: str, response_time: Any = '') -> None:
+        meta = f'[emotion: {html_escape(emotion or "neutral")}]'
+        if response_time != '':
+            meta += f' [time: {response_time}s]'
+        self._insert_chat_html(f'<br><span>{meta}</span></div><br>')
+        self.streaming_active = False
+        self.streaming_text = ''
 
     def set_busy(self, busy: bool) -> None:
         self.send_button.setEnabled(not busy)
@@ -951,7 +987,7 @@ class MainWindow(QMainWindow):
             f"category: {response_plan.get('category', '')} | intent: {response_plan.get('intent', '')}",
             f"mode: {response_plan.get('mode', '')} | length: {response_plan.get('length', '')}",
             f"style: {style.get('category', '')} | max_sentences: {style.get('max_sentences', '')}",
-            f"examples: {len(summaries)} | retrieval: {example_bank.get('retrieval_mode', '')}",
+            f"examples: {len(summaries)} | retrieval: {example_bank.get('retrieval_mode', '')} | weight: {example_bank.get('weight', '')}",
         ]
         for index, item in enumerate(summaries[:3], start=1):
             if isinstance(item, dict):
@@ -1003,9 +1039,29 @@ class MainWindow(QMainWindow):
                 self.settings_dialog.render(self.current_config)
         if self.data_dialog is not None:
             self.data_dialog.render(payload)
+        if payload.get('action') == 'preview_import':
+            self.confirm_import_preview(payload)
         self.update_context_label(payload)
         if payload.get('action') in {'snapshot', ''}:
             self.load_recent_messages_once(payload)
+            self.maybe_show_startup_greeting(payload)
+
+    def confirm_import_preview(self, payload: dict[str, Any]) -> None:
+        preview = payload.get('import_preview') if isinstance(payload.get('import_preview'), dict) else {}
+        path = str(payload.get('import_path') or '').strip()
+        if not preview or not path:
+            return
+        tables = preview.get('tables') if isinstance(preview.get('tables'), dict) else {}
+        table_lines = [f'{name}: {count}' for name, count in sorted(tables.items())]
+        text = (
+            'Import this user data package? A database backup will be created first.\n\n'
+            f'Format: {preview.get("format", "unknown")}\n'
+            f'Exported: {preview.get("exported_at", "unknown")}\n'
+            + '\n'.join(table_lines)
+        )
+        answer = QMessageBox.question(self, 'Import preview', text)
+        if answer == QMessageBox.StandardButton.Yes:
+            self.user_data_import_requested.emit(path, False)
 
     def update_context_label(self, payload: dict[str, Any]) -> None:
         status = payload.get('status') if isinstance(payload.get('status'), dict) else {}
@@ -1032,6 +1088,8 @@ class MainWindow(QMainWindow):
         self.last_user_activity = dt.datetime.now()
         if not result.get('ok'):
             self.set_emotion('concerned')
+            if self.streaming_active:
+                self._finish_streaming_message('concerned')
             self.add_system_message(f'Request failed: {result.get("error", "unknown error")}')
             return
 
@@ -1039,7 +1097,12 @@ class MainWindow(QMainWindow):
         reply_text = str(result.get('text') or '')
         emotion = str(visual_state.get('raw_emotion') or 'neutral')
         self.set_emotion(str(visual_state.get('emotion') or emotion))
-        self.add_monika_message(reply_text, emotion, result.get('response_time', ''))
+        if result.get('streamed') and self.streaming_active:
+            self._finish_streaming_message(emotion, result.get('response_time', ''))
+        else:
+            if self.streaming_active:
+                self._finish_streaming_message(emotion, result.get('response_time', ''))
+            self.add_monika_message(reply_text, emotion, result.get('response_time', ''))
         self.update_debug_panel(result)
         if self.tts_enabled and reply_text:
             self.add_system_message('TTS is synthesizing/playing...')
@@ -1066,6 +1129,35 @@ class MainWindow(QMainWindow):
                 self.add_user_message(content)
             elif role == 'assistant':
                 self.add_monika_message(content, 'neutral')
+
+    def maybe_show_startup_greeting(self, payload: dict[str, Any]) -> None:
+        if self.startup_greeting_shown:
+            return
+        if not self.current_config.get('gui_startup_greeting_enabled', True):
+            return
+        self.startup_greeting_shown = True
+        profile = payload.get('profile') if isinstance(payload.get('profile'), dict) else {}
+        status = payload.get('status') if isinstance(payload.get('status'), dict) else {}
+        events = status.get('today_events') if isinstance(status.get('today_events'), list) else []
+        english = str(self.current_config.get('language') or 'en').lower().startswith('en')
+        last_seen = str(profile.get('last_seen') or '').strip()
+        event_names = [str(item.get('name') or '').strip() for item in events if isinstance(item, dict) and str(item.get('name') or '').strip()]
+        if english:
+            if event_names:
+                text = f"Welcome back. I noticed today is {', '.join(event_names[:2])}, so I wanted to greet you properly."
+            elif last_seen:
+                text = "Welcome back. I kept your seat warm while you were away."
+            else:
+                text = "There you are. I'm glad we get to start from here."
+        else:
+            if event_names:
+                text = f"欢迎回来。今天是{', '.join(event_names[:2])}，所以我想好好和你打个招呼。"
+            elif last_seen:
+                text = "欢迎回来。我有好好等你哦。"
+            else:
+                text = "你来啦。能从这里开始，我很开心。"
+        self.set_emotion('smile')
+        self.add_monika_message(text, 'smile')
 
     def check_idle_spire(self) -> None:
         if not self.current_config.get('gui_idle_spire_enabled', False):

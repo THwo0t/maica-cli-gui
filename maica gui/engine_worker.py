@@ -21,9 +21,10 @@ CLI_DIR = ROOT_DIR / 'maica cli'
 if str(CLI_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_DIR))
 
-from embedding_index import prewarm_embedding_model  # noqa: E402
+from embedding_index import build_memory_vector_index, prewarm_embedding_model  # noqa: E402
 from engine import MaicaEngine  # noqa: E402
 from mfocus import status_summary  # noqa: E402
+from embedding_service_client import build_service_memory_index  # noqa: E402
 from config_io import save_json  # noqa: E402
 from data_portability import export_user_data, import_user_data, preview_user_data  # noqa: E402
 
@@ -33,6 +34,8 @@ class GuiEngineWorker(QObject):
     config_ready = Signal(dict)
     status = Signal(str)
     finished = Signal(dict)
+    stream_started = Signal(dict)
+    stream_chunk = Signal(str)
     data_ready = Signal(dict)
 
     def __init__(
@@ -254,10 +257,21 @@ class GuiEngineWorker(QObject):
         try:
             if self.engine is None:
                 self._ensure_engine()
+            stream_started = False
+
+            def on_stream_chunk(chunk: str) -> None:
+                nonlocal stream_started
+                if not stream_started:
+                    stream_started = True
+                    self.stream_started.emit({'source': mode})
+                self.stream_chunk.emit(chunk)
+
             if mode == 'spire':
-                result = self.engine.spire(text)
+                result = self.engine.spire(text, stream_callback=on_stream_chunk)
             else:
-                result = self.engine.chat(text)
+                result = self.engine.chat(text, stream_callback=on_stream_chunk)
+            if stream_started:
+                result['streamed'] = True
             self.finished.emit(result)
         except Exception as exc:
             self.finished.emit(
@@ -288,6 +302,7 @@ class GuiEngineWorker(QObject):
         try:
             engine = self._ensure_engine()
             notice = ''
+            extra: dict[str, Any] = {}
             if action == 'set_profile_value':
                 key = str(kwargs.get('key') or '').strip()
                 value = str(kwargs.get('value') or '').strip()
@@ -342,11 +357,14 @@ class GuiEngineWorker(QObject):
                 target = Path(str(kwargs.get('path') or '')).expanduser()
                 if target:
                     result = preview_user_data(target)
-                    notice = 'Import preview: ' + json.dumps(result, ensure_ascii=False)
+                    extra['import_preview'] = result
+                    extra['import_path'] = str(target)
+                    notice = 'Import preview ready.'
             elif action == 'import_user_data':
                 target = Path(str(kwargs.get('path') or '')).expanduser()
                 if target:
                     result = import_user_data(engine.store, target, bool(kwargs.get('replace', False)))
+                    extra['import_result'] = result
                     notice = 'Imported user data: ' + json.dumps(result, ensure_ascii=False)
             elif action == 'summarize_memory':
                 result = engine.summarize_recent_memory()
@@ -360,7 +378,12 @@ class GuiEngineWorker(QObject):
                     self._sync_embedding_service()
                     notice = f'Saved config: {", ".join(applied)}'
 
+            vector_notice = self._auto_refresh_memory_vectors(engine)
+            if vector_notice:
+                notice = f'{notice} | {vector_notice}' if notice else vector_notice
+
             payload = self._data_snapshot(engine)
+            payload.update(extra)
             payload.update({'ok': True, 'action': action, 'notice': notice, 'error': ''})
             self.data_ready.emit(payload)
         except Exception as exc:
@@ -372,6 +395,30 @@ class GuiEngineWorker(QObject):
                     'error': f'{exc}\n{traceback.format_exc()}',
                 }
             )
+
+    def _auto_refresh_memory_vectors(self, engine: MaicaEngine) -> str:
+        config = engine.config
+        if not config.get('memory_vector_auto_rebuild', True):
+            return ''
+        if not config.get('memory_embedding_enabled', False):
+            return ''
+        if not engine.store.memory_vector_dirty():
+            return ''
+        if config.get('embedding_service_enabled', False):
+            try:
+                result = build_service_memory_index(config)
+                return f'Memory vector index rebuilt by service ({result.get("count", 0)} memories).'
+            except Exception as exc:
+                return f'Memory vector rebuild pending; service failed: {exc}'
+        if config.get('gui_disable_thread_embeddings', True):
+            return 'Memory vector index marked dirty. Enable embedding service or rebuild from CLI.'
+        try:
+            result = build_memory_vector_index(engine.store, config)
+            engine.store.clear_memory_vector_dirty()
+            engine.store.add_event('memory_vector_rebuilt', {'count': result.get('count'), 'mode': 'gui_worker'})
+            return f'Memory vector index rebuilt ({result.get("count", 0)} memories).'
+        except Exception as exc:
+            return f'Memory vector rebuild pending: {exc}'
 
     def _data_snapshot(self, engine: MaicaEngine) -> dict[str, Any]:
         profile = engine.store.get_profile()

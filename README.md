@@ -10,18 +10,19 @@ yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
 
 - OpenAI-compatible chat backend.
 - MAICA/MAS-style context planning, memory, profile, affection, facts, and events.
-- Independent PySide6 GUI.
+- Independent PySide6 GUI with live streaming display for compatible APIs.
 - Layered Monika PNG avatar with expression mapping.
 - Runtime context strip with date/time, affection, relationship stage, and today events.
 - Auto/day/night/rain spaceroom background modes.
 - Aliyun Bailian CosyVoice TTS provider.
 - Windows SAPI fallback TTS.
 - Windows Speech Recognition STT MVP.
-- GUI Data Manager for profile, memories, facts, and safe debug snapshots.
+- GUI Data Manager for profile, memories, facts, import preview, export/import, and safe debug snapshots.
 - GUI Settings for common non-secret options.
 - GUI Diagnostics export for safe troubleshooting reports.
 - GUI Debug panel for compact per-reply MFocus/Response Planner summaries.
-- Optional out-of-process embedding service for GUI vector/RAG retrieval.
+- Optional out-of-process embedding service for GUI vector/RAG retrieval and memory-vector rebuilds.
+- Startup greetings and event-aware context inspired by MAS daily behavior.
 - CLI debugger for advanced maintenance.
 
 ## Run
@@ -71,7 +72,7 @@ Run the lightweight local test suite:
 
 The smoke test checks Python compilation, public JSON config validity, TTS text
 cleaning, STT disabled-provider behavior, diagnostics, and GUI offscreen
-startup.
+startup. v0.11.1 also validates the Engine streaming path with a fake client.
 
 The suite also launches the GUI once with an isolated safe test database under
 `maica gui/.safe_test/` and runs a no-API fake-client chat through `MaicaEngine`
@@ -140,7 +141,9 @@ When enabled, the GUI autostarts `maica cli/embedding_service.py` and Example
 Bank retrieval calls the service instead of loading embeddings inside the GUI
 process. If the service is unavailable or still cold-starting, chat falls back
 to non-vector retrieval. Increase `embedding_service_timeout` if you prefer the
-first vector request to wait for the local model to finish loading.
+first vector request to wait for the local model to finish loading. When
+`memory_vector_auto_rebuild` is enabled, memory edits mark the memory index
+dirty and the GUI asks the service to rebuild it when possible.
 
 ## Releases
 

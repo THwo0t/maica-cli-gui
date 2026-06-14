@@ -251,6 +251,7 @@ def build_response_plan(
         'candidate_count': bank_debug.get('candidate_count', 0),
         'scored_count': bank_debug.get('scored_count', 0),
         'scores': [item.get('score') for item in examples],
+        'weight': bank_debug.get('weight'),
         'selected_intents': bank_debug.get('selected_intents', []),
         'vector_error': bank_debug.get('vector_error', ''),
     }

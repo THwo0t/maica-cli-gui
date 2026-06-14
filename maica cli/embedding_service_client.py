@@ -72,3 +72,9 @@ def search_service_memories(
     )
     rows = result.get("results") or []
     return rows if isinstance(rows, list) else []
+
+
+def build_service_memory_index(config: dict[str, Any]) -> dict[str, Any]:
+    result = post_json(config, "/build_memories", {})
+    payload = result.get("result")
+    return payload if isinstance(payload, dict) else result

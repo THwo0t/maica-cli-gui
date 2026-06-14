@@ -17,6 +17,7 @@ from typing import Any
 from config_defaults import DEFAULT_CONFIG
 from config_io import load_json
 from embedding_index import (
+    build_memory_vector_index,
     check_memory_vector_ready,
     check_vector_ready,
     search_memory_vectors,
@@ -89,6 +90,8 @@ class Handler(BaseHTTPRequestHandler):
                 self.handle_search_examples()
             elif self.path == "/search_memories":
                 self.handle_search_memories()
+            elif self.path == "/build_memories":
+                self.handle_build_memories()
             else:
                 self.send_json({"ok": False, "error": "not found"}, 404)
         except Exception as exc:
@@ -111,6 +114,18 @@ class Handler(BaseHTTPRequestHandler):
         min_score = float(payload.get("min_score") if payload.get("min_score") is not None else config.get("memory_embedding_min_score", 0.55))
         results = search_memory_vectors(query, config, limit=limit, min_score=min_score)
         self.send_json({"ok": True, "results": results})
+
+    def handle_build_memories(self) -> None:
+        read_body(self)
+        config = self.server.load_config()
+        store = Store(self.server.db_path)
+        try:
+            result = build_memory_vector_index(store, config)
+            store.clear_memory_vector_dirty()
+            store.add_event('memory_vector_rebuilt', {'count': result.get('count'), 'mode': 'service'})
+        finally:
+            store.close()
+        self.send_json({"ok": True, "result": result})
 
 
 def main() -> int:

@@ -93,7 +93,7 @@
   "auto_memory_summary_turns": 24,
   "auto_memory_summary_min_messages": 8,
   "auto_memory_summary_max_messages": 40,
-  "memory_vector_auto_rebuild": false,
+  "memory_vector_auto_rebuild": true,
   "affection_min": -100.0,
   "affection_max": 10000.0,
   "affection_daily_positive_cap": 12.0,

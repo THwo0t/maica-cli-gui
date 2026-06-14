@@ -1,4 +1,4 @@
-# MAICA GUI v0.10.4
+# MAICA GUI v0.11.1
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -213,11 +213,11 @@ Use the `Settings` button to edit common non-secret options:
 - MFocus/MTrigger mode. MTrigger is rule-only in this branch.
 - Response output mode and metadata extraction.
 - Lite/example-only response planner mode.
-- Example Bank retrieval limits, score threshold, and prompt weight.
+- Example Bank retrieval limits, score threshold, and prompt weight. The weight now directly scales candidate scores.
 - TTS provider and Bailian voice/model/format/instruction.
 - Example Bank vectors, memory vectors, and external embedding service.
 - Background mode: auto, day, night, or rain.
-- Idle proactive `/spire`, startup greeting, automatic summaries, and hidden token stats.
+- Idle proactive `/spire`, event-aware startup greeting, automatic summaries, and hidden token stats.
 - GUI thread embedding safety toggle.
 
 Settings are applied to the persistent backend immediately after saving. New
@@ -313,3 +313,12 @@ blobs, TTS caches, raw MAS assets, and secret-like strings.
 - Full MAS outfit/accessory parser.
 - Event decoration switching.
 - Packaged `.exe`.
+
+
+## v0.11.1 notes
+
+- GUI chat can display streaming chunks while the Engine still performs final parsing, logging, memory writes, and MTrigger updates once the reply finishes.
+- `example_bank_weight` now scales Example Bank candidate scores instead of being only a UI/config value.
+- Memory changes mark vector indexes dirty; with `memory_vector_auto_rebuild` and the embedding service enabled, the service can rebuild memory vectors without loading torch in the GUI thread.
+- Import now previews table counts before applying data and still creates a DB backup first.
+- Startup greeting shows a lightweight Monika message and can mention today's configured events.
