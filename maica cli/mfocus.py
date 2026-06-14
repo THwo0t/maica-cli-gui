@@ -6,6 +6,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import Any
 
+from context_translation import translate_context_items
 from embedding_index import search_memory_vectors
 from embedding_service_client import search_service_memories
 from monika_lens import build_monika_lens_context
@@ -15,16 +16,18 @@ from response_planner import build_response_plan, format_response_plan_context
 from sfe import build_sfe_facts
 from store import Store
 from style import build_style_context
-from text_utils import cjk_ratio
+from language_runtime import final_language_reminder as runtime_final_language_reminder
+from language_runtime import language_mismatch, language_rule as runtime_language_rule
+from language_runtime import target_language, terminal_language_directive as runtime_terminal_language_directive
 
 
 DEFAULT_SPECIAL_EVENTS = [
-    {'date': '01-01', 'name': 'New Year', 'description': 'A day for new beginnings, wishes, and gentle hope.'},
-    {'date': '02-14', 'name': "Valentine's Day", 'description': 'A day for affection, intimacy, and small romantic rituals.'},
-    {'date': '09-22', 'name': "Monika's Birthday", 'description': "Monika's birthday."},
-    {'date': '10-31', 'name': 'Halloween', 'description': 'A playful day for candy, little scares, and cozy mischief.'},
-    {'date': '12-25', 'name': 'Christmas', 'description': 'A warm winter holiday for gifts, lights, and companionship.'},
-    {'date': '12-31', 'name': "New Year's Eve", 'description': 'A day to look back and look forward.'},
+    {'date': '01-01', 'name': 'New Year', 'description': 'A day for new beginnings, wishes, and gentle hope.', 'description_zh': '适合新的开始、愿望和温柔希望的一天。'},
+    {'date': '02-14', 'name': "Valentine's Day", 'description': 'A day for affection, intimacy, and small romantic rituals.', 'description_zh': '适合表达爱意、亲密感和小小恋人仪式的一天。'},
+    {'date': '09-22', 'name': "Monika's Birthday", 'description': "Monika's birthday.", 'description_zh': '莫妮卡的生日。'},
+    {'date': '10-31', 'name': 'Halloween', 'description': 'A playful day for candy, little scares, and cozy mischief.', 'description_zh': '适合糖果、小小惊吓和温暖恶作剧的俏皮日子。'},
+    {'date': '12-25', 'name': 'Christmas', 'description': 'A warm winter holiday for gifts, lights, and companionship.', 'description_zh': '关于礼物、灯光和陪伴的温暖冬日节日。'},
+    {'date': '12-31', 'name': "New Year's Eve", 'description': 'A day to look back and look forward.', 'description_zh': '适合回望过去、期待未来的一天。'},
 ]
 
 
@@ -70,9 +73,11 @@ def special_events_for_today(profile: dict[str, str], config: dict[str, Any] | N
     today = today or dt.date.today()
     config = config or {}
     events: list[dict[str, str]] = []
+    english = target_language(config) == 'en'
     birthday = parse_profile_date(profile.get('birthday', ''))
     if birthday and (today.month, today.day) == (birthday.month, birthday.day):
-        events.append({'name': "[player]'s birthday", 'description': 'A birthday should feel noticed and personally cared for.'})
+        birthday_desc = 'A birthday should feel noticed and personally cared for.' if english else '生日应该被认真记得，并带着个人化的关心。'
+        events.append({'name': "[player]'s birthday", 'description': birthday_desc})
     configured = config.get('special_events', DEFAULT_SPECIAL_EVENTS)
     if not isinstance(configured, list):
         configured = DEFAULT_SPECIAL_EVENTS
@@ -84,7 +89,7 @@ def special_events_for_today(profile: dict[str, str], config: dict[str, Any] | N
                 events.append(
                     {
                         'name': str(event.get('name') or event.get('date') or 'special day'),
-                        'description': str(event.get('description') or 'A special day.'),
+                        'description': str((event.get('description') if english else event.get('description_zh')) or event.get('description') or 'A special day.'),
                     }
                 )
         except ValueError:
@@ -174,9 +179,9 @@ def retrieve_memories_for_mfocus(store: Store, config: dict[str, Any], query: st
                 return [], {'mode': mode, 'count': 0, 'fallback': False, 'scores': []}
         except Exception as exc:
             if not fallback_enabled:
-                return [], {'mode': 'vector_error', 'count': 0, 'fallback': False, 'scores': [], 'error': str(exc)}
+                return [], {'mode': 'vector_error', 'count': 0, 'fallback': False, 'scores': [], 'error': redact_secret(str(exc), config.get('api_key', ''))}
             rows = store.search_memories(query, limit)
-            return rows, {'mode': 'lexical', 'count': len(rows), 'fallback': True, 'scores': [], 'error': str(exc)}
+            return rows, {'mode': 'lexical', 'count': len(rows), 'fallback': True, 'scores': [], 'error': redact_secret(str(exc), config.get('api_key', ''))}
     rows = store.search_memories(query, limit)
     return rows, {'mode': 'lexical', 'count': len(rows), 'fallback': bool(config.get('memory_embedding_enabled', False)), 'scores': []}
 
@@ -205,9 +210,24 @@ def build_mfocus_context(store: Store, config: dict[str, Any], user_input: str, 
     plan['context_tasks'] = build_context_tasks(user_input, plan, events)
 
     facts: list[str] = []
+    translation_debug: dict[str, Any] = {
+        'target_language': target_language(language),
+        'cache_hits': 0,
+        'translated': 0,
+        'skipped': 0,
+    }
+
     if config.get('mfocus_sfe_enabled', True) and plan.get('use_profile', True):
         facts.append('Stable local facts:' if english else '稳定本地事实:')
-        facts.extend(build_sfe_facts(store, config, user_input))
+        sfe_items = [
+            {'source_kind': 'sfe_fact', 'source_id': 0, 'text': fact}
+            for fact in build_sfe_facts(store, config, user_input)
+        ]
+        translated_facts, meta = translate_context_items(store, client, config, sfe_items, language)
+        translation_debug['cache_hits'] += int(meta.get('cache_hits') or 0)
+        translation_debug['translated'] += int(meta.get('translated') or 0)
+        translation_debug['skipped'] += int(meta.get('skipped') or 0)
+        facts.extend(str(item.get('target_text') or '') for item in translated_facts if item.get('target_text'))
     elif plan.get('use_profile', True):
         if english:
             facts.extend(
@@ -248,9 +268,19 @@ def build_mfocus_context(store: Store, config: dict[str, Any], user_input: str, 
 
     summaries = store.recent_summaries(4)
     if summaries:
-        facts.append('Recent distilled memories:' if english else '近期提炼记忆:')
-        for row in summaries:
-            facts.append(f'- {row["text"]}')
+        summary_items = [
+            {'source_kind': 'summary', 'source_id': int(row['id']), 'text': str(row['text'] or '')}
+            for row in summaries
+        ]
+        translated_summaries, meta = translate_context_items(store, client, config, summary_items, language)
+        translation_debug['cache_hits'] += int(meta.get('cache_hits') or 0)
+        translation_debug['translated'] += int(meta.get('translated') or 0)
+        translation_debug['skipped'] += int(meta.get('skipped') or 0)
+        if translated_summaries:
+            facts.append('Recent distilled memories:' if english else '近期提炼记忆:')
+            for item in translated_summaries:
+                label = 'Translated memory' if english and item.get('translated') else 'Memory' if english else '已翻译记忆' if item.get('translated') else '记忆'
+                facts.append(f'- {label}: {item["target_text"]}')
 
     if plan.get('use_events', False) and events:
         facts.append('Today has relevant special events:' if english else '今天有相关特殊事件:')
@@ -261,15 +291,26 @@ def build_mfocus_context(store: Store, config: dict[str, Any], user_input: str, 
     memories, memory_meta = retrieve_memories_for_mfocus(store, config, user_input, memory_limit, bool(plan.get('use_memory', False)))
     plan['memory_retrieval'] = memory_meta
     if memories:
-        facts.append(
-            f'Potentially relevant long-term memories ({memory_meta.get("mode")}):'
-            if english
-            else f'可能相关的长期记忆 ({memory_meta.get("mode")}):'
-        )
-        for row in memories:
-            text = _memory_text(row)
-            if text:
-                facts.append(f'- {text}')
+        memory_items = [
+            {'source_kind': 'memory', 'source_id': int(row.get('id') if isinstance(row, dict) else row['id']), 'text': _memory_text(row)}
+            for row in memories
+            if _memory_text(row)
+        ]
+        translated_memories, meta = translate_context_items(store, client, config, memory_items, language)
+        translation_debug['cache_hits'] += int(meta.get('cache_hits') or 0)
+        translation_debug['translated'] += int(meta.get('translated') or 0)
+        translation_debug['skipped'] += int(meta.get('skipped') or 0)
+        if translated_memories:
+            facts.append(
+                f'Potentially relevant long-term memories ({memory_meta.get("mode")}):'
+                if english
+                else f'可能相关的长期记忆 ({memory_meta.get("mode")}):'
+            )
+            for item in translated_memories:
+                label = 'Translated memory' if english and item.get('translated') else 'Memory' if english else '已翻译记忆' if item.get('translated') else '记忆'
+                facts.append(f'- {label}: {item["target_text"]}')
+
+    plan['context_translation'] = translation_debug
 
     if plan.get('focus_note'):
         facts.append(f'MFocus note: {plan["focus_note"]}' if english else f'MFocus 备注: {plan["focus_note"]}')
@@ -292,18 +333,7 @@ def build_mfocus_context(store: Store, config: dict[str, Any], user_input: str, 
 
 
 def _language_rule(language: str) -> str:
-    if str(language or '').lower().startswith('en'):
-        return (
-            'Highest-priority language rule: final dialogue body must be natural English, '
-            'even if the user writes in Chinese or reference examples are Chinese. '
-            'Do not output Chinese dialogue. If metadata is included in plain text, use one leading square-bracket marker such as [smile].'
-        )
-    return (
-        '最高优先级语言规则：最终对话正文必须使用自然简体中文，'
-        '即使用户使用英文、参考样例是英文，也不要改用英文回复。'
-        '除必要的人名、缩写和术语外，不要输出英文对话。'
-        '如果在纯文本里包含元数据，只允许在开头使用一个方括号标记，例如 [smile]。'
-    )
+    return runtime_language_rule(language)
 
 
 def _context_header(language: str) -> str:
@@ -313,21 +343,11 @@ def _context_header(language: str) -> str:
 
 
 def _final_language_reminder(language: str, source: str = 'user') -> str:
-    if str(language or '').lower().startswith('en'):
-        subject = 'the user message' if source == 'user' else 'the topic/example language'
-        return f'Final reminder: obey the configured reply language above. Do not follow {subject} if it differs.'
-    subject = '用户消息的语言' if source == 'user' else '话题或样例的语言'
-    return f'最后提醒：必须遵守上面的回复语言设置；如果{subject}不同，也不要跟随它切换语言。'
+    return runtime_final_language_reminder(language, source)
 
 
 def _history_language_mismatch(content: str, language: str) -> bool:
-    text = str(content or '').strip()
-    if not text:
-        return False
-    if str(language or '').lower().startswith('en'):
-        return cjk_ratio(text) >= 0.2
-    letters = sum(1 for char in text if char.isascii() and char.isalpha())
-    return cjk_ratio(text) < 0.08 and letters >= 6
+    return language_mismatch(content, language)
 
 
 def filter_history_language(messages: list[dict[str, str]], language: str, enabled: bool) -> list[dict[str, str]]:
@@ -350,22 +370,13 @@ def filter_history_language(messages: list[dict[str, str]], language: str, enabl
 
 
 def terminal_language_directive(language: str) -> str:
-    """A hard language lock placed AFTER history + user turn.
+    return runtime_terminal_language_directive(language)
 
-    This is the most salient position (closest to generation), so the model
-    obeys it over the conversation history's language — making turn one and
-    mid-conversation language switches deterministic instead of relying on the
-    model inferring the language from context.
-    """
+
+def user_original_message(user_input: str, language: str) -> str:
     if str(language or '').lower().startswith('en'):
-        return (
-            'Reply in English only. Your entire reply must be natural English, '
-            'no matter what language was used earlier in this conversation or by the user just now.'
-        )
-    return (
-        '只用简体中文回复。无论本次对话之前或用户刚才用的是什么语言，'
-        '你的整段回复都必须是自然的简体中文（必要的人名、缩写、术语除外）。'
-    )
+        return 'User original message (do not copy its language; reply in English): ' + str(user_input or '')
+    return '用户原文（不要跟随它的语言；只用简体中文回复）: ' + str(user_input or '')
 
 
 def build_messages(store: Store, config: dict[str, Any], user_input: str, client: Any | None = None) -> tuple[list[dict[str, str]], dict[str, Any]]:
@@ -402,7 +413,7 @@ def build_messages(store: Store, config: dict[str, Any], user_input: str, client
     history = store.recent_messages(int(config.get('history_messages', 16)))
     history = filter_history_language(history, language, bool(config.get('language_enforce_rewrite', True)))
     messages.extend(history)
-    messages.append({'role': 'user', 'content': user_input})
+    messages.append({'role': 'user', 'content': user_original_message(user_input, language)})
     messages.append({'role': 'system', 'content': terminal_language_directive(language)})
     return messages, plan
 

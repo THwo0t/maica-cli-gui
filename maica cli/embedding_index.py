@@ -11,6 +11,9 @@ import warnings
 from pathlib import Path
 from typing import Any
 
+from language_runtime import target_language
+from text_utils import redact_secret
+
 
 APP_DIR = Path(__file__).resolve().parent
 
@@ -117,12 +120,24 @@ def prewarm_embedding_model(config: dict[str, Any], quiet: bool = True) -> dict[
             dimension = dimension_getter() if dimension_getter is not None else None
         return {"ok": True, "dimension": dimension, "error": ""}
     except Exception as exc:
-        return {"ok": False, "dimension": None, "error": str(exc)}
+        return {"ok": False, "dimension": None, "error": redact_secret(str(exc), config.get("api_key", ""))}
+
+
+def _paths_for_language(config: dict[str, Any], key: str, fallback_key: str, language: str) -> list[Any]:
+    mapped = config.get(key)
+    if isinstance(mapped, dict):
+        values = mapped.get(target_language(language))
+        if values is not None:
+            return _as_list(values)
+    return _as_list(config.get(fallback_key))
 
 
 def _example_paths(config: dict[str, Any]) -> list[Path]:
-    core_paths = _as_list(config.get("example_bank_core_paths"))
-    extra_paths = _as_list(config.get("example_bank_paths") or ["data/dialogue_examples_maica_cleaned.jsonl"])
+    language = target_language(config)
+    core_paths = _paths_for_language(config, "example_bank_core_paths_by_language", "example_bank_core_paths", language)
+    extra_paths = _paths_for_language(config, "example_bank_paths_by_language", "example_bank_paths", language)
+    if not extra_paths:
+        extra_paths = ["data/dialogue_examples_maica_cleaned.jsonl"]
     return [resolve_app_path(path) for path in [*core_paths, *extra_paths]]
 
 

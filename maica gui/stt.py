@@ -120,7 +120,7 @@ class DashScopeParaformerSTT:
             )
             sd.wait()
         except Exception as exc:
-            return b'', f'microphone capture failed: {exc}'
+            return b'', redact_secret(f'microphone capture failed: {exc}', self._api_key())
         return bytes(frames.tobytes()), ''
 
     def listen(self) -> dict[str, Any]:
@@ -245,7 +245,7 @@ class DashScopeParaformerSTT:
             elif name == 'task-finished':
                 break
             elif name == 'task-failed':
-                return {'ok': False, 'text': '', 'error': self._frame_error(frame)}
+                return {'ok': False, 'text': '', 'error': redact_secret(self._frame_error(frame), self._api_key())}
         if last_partial:
             sentences.append(last_partial)
         text = ' '.join(s.strip() for s in sentences if s.strip()).strip()

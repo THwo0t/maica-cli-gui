@@ -20,7 +20,8 @@ from mtrigger import apply_mtrigger
 from response import limit_dialogue_sentences, parse_assistant_response
 from spire_topics import choose_spire_topic
 from store import Store
-from text_utils import cjk_ratio
+from language_runtime import rewrite_prompt, target_language
+from text_utils import cjk_ratio, redact_secret
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -212,6 +213,14 @@ class MaicaEngine:
                 self.store.add_event("affection_event_bonus", {"events": [event["name"] for event in events], "delta": bonus})
                 self.store.set_profile_value(key, "done")
 
+    def _safe_error(self, exc: Exception | str) -> str:
+        return redact_secret(
+            str(exc),
+            self.config.get("api_key", ""),
+            self.config.get("tts_bailian_api_key", ""),
+            self.config.get("stt_bailian_api_key", ""),
+        )
+
     def chat(self, user_input: str, stream_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
         started = time.time()
         try:
@@ -226,7 +235,7 @@ class MaicaEngine:
                 mfocus_plan["language_rewrite"] = rewrite_info
 
             self.store.add_message("user", user_input)
-            self.store.add_message("assistant", reply)
+            self.store.add_message("assistant", reply, language=target_language(self.config))
             self.store.increment_chat_turns()
             summary_notice = self._auto_summarize_if_needed()
             self.store.add_event(
@@ -295,7 +304,7 @@ class MaicaEngine:
                 "streamed": False,
                 "response_time": round(time.time() - started, 3),
                 "debug": {},
-                "error": str(exc),
+                "error": self._safe_error(exc),
             }
 
     def spire(self, hint: str = "", stream_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
@@ -320,7 +329,7 @@ class MaicaEngine:
             if rewrite_info:
                 mfocus_plan["language_rewrite"] = rewrite_info
 
-            self.store.add_message("assistant", reply)
+            self.store.add_message("assistant", reply, language=target_language(self.config))
             self.store.increment_chat_turns()
             self.store.add_event(
                 "assistant_meta",
@@ -393,7 +402,7 @@ class MaicaEngine:
                 "streamed": False,
                 "response_time": round(time.time() - started, 3),
                 "debug": {},
-                "error": str(exc),
+                "error": self._safe_error(exc),
             }
 
     def _auto_refresh_memory_vectors(self) -> str:
@@ -408,7 +417,7 @@ class MaicaEngine:
                 result = build_service_memory_index(self.config)
                 return f'Memory vector index rebuilt by service ({result.get("count", 0)} memories).'
             except Exception as exc:
-                return f'Memory vector rebuild pending; service failed: {exc}'
+                return f'Memory vector rebuild pending; service failed: {self._safe_error(exc)}'
         if self.config.get('gui_disable_thread_embeddings', False):
             return 'Memory vector index marked dirty. Enable embedding service or rebuild from CLI.'
         try:
@@ -417,7 +426,7 @@ class MaicaEngine:
             self.store.add_event('memory_vector_rebuilt', {'count': result.get('count'), 'mode': 'engine'})
             return f'Memory vector index rebuilt ({result.get("count", 0)} memories).'
         except Exception as exc:
-            return f'Memory vector rebuild pending: {exc}'
+            return f'Memory vector rebuild pending: {self._safe_error(exc)}'
 
     def _call_chat(
         self,
@@ -513,14 +522,7 @@ class MaicaEngine:
         language = str(self.config.get("language") or "en").lower()
         if not _reply_language_mismatch(reply, language):
             return reply, {}
-        english = language.startswith("en")
-        target = "natural English" if english else "natural Simplified Chinese"
-        prompt = (
-            f"Rewrite the dialogue body into {target}. "
-            "Preserve the meaning, intimacy, sentence breaks, and Monika's voice. "
-            "Do not add explanations. Do not add metadata, brackets, JSON, or stage directions. "
-            "Return only the rewritten dialogue body."
-        )
+        prompt = rewrite_prompt(language)
         info: dict[str, Any] = {"triggered": True, "rewritten": False}
         try:
             rewritten = self._call_aux(
@@ -541,7 +543,7 @@ class MaicaEngine:
                 info["rewritten"] = best != reply
                 return best, info
         except Exception as exc:
-            info["error"] = str(exc)
+            info["error"] = self._safe_error(exc)
         return reply, info
 
     def _auto_summarize_if_needed(self) -> str:
@@ -567,11 +569,19 @@ class MaicaEngine:
         start_id = int(rows[0]["id"])
         end_id = int(rows[-1]["id"])
         transcript = "\n".join(f"{row['role']}: {row['content']}" for row in rows)
-        prompt = (
-            "Summarize this casual companion chat for future memory. "
-            "Only keep stable facts, current plans, open threads, recurring preferences, and emotionally important context. "
-            "Do not invent a plot. Do not overinterpret. Return 3-8 concise bullet points in English."
-        )
+        language = target_language(self.config)
+        if language == "en":
+            prompt = (
+                "Summarize this casual companion chat for future memory. "
+                "Only keep stable facts, current plans, open threads, recurring preferences, and emotionally important context. "
+                "Do not invent a plot. Do not overinterpret. Return 3-8 concise bullet points in English."
+            )
+        else:
+            prompt = (
+                "请为未来记忆总结这段闲聊式伴侣对话。"
+                "只保留稳定事实、当前计划、未完成话题、反复出现的偏好和情绪上重要的上下文。"
+                "不要编造主线，不要过度解读。用简体中文返回 3-8 条简洁要点。"
+            )
         try:
             summary = self.client.chat(
                 [
@@ -581,9 +591,9 @@ class MaicaEngine:
                 overrides={"temperature": 0.1, "max_tokens": 500},
             )
         except Exception as exc:
-            return {"ok": False, "summary_id": 0, "error": str(exc)}
+            return {"ok": False, "summary_id": 0, "error": self._safe_error(exc)}
         summary = summary.strip()
         if not summary:
             return {"ok": False, "summary_id": 0, "error": "empty summary"}
-        summary_id = self.store.add_summary(summary, "auto", start_id, end_id, 3)
+        summary_id = self.store.add_summary(summary, "auto", start_id, end_id, 3, language=language)
         return {"ok": True, "summary_id": summary_id, "start_id": start_id, "end_id": end_id}

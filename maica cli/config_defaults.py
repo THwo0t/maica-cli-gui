@@ -54,6 +54,14 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "example_bank_enabled": True,
     "example_bank_core_paths": ["data/dialogue_examples_core.jsonl"],
     "example_bank_paths": ["data/dialogue_examples_maica_cleaned.jsonl"],
+    "example_bank_core_paths_by_language": {
+        "en": ["data/dialogue_examples_core.jsonl"],
+        "zh": ["data/dialogue_examples_core.jsonl"]
+    },
+    "example_bank_paths_by_language": {
+        "en": ["data/dialogue_examples_en.jsonl"],
+        "zh": ["data/dialogue_examples_zh.jsonl"]
+    },
     "example_bank_limit": 3,
     "example_bank_candidate_limit": 40,
     "example_bank_min_quality": 4,
@@ -85,7 +93,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "embedding_service_timeout": 8,
     "spire_wikipedia_enabled": True,
     "spire_wikipedia_probability": 0.35,
-    "spire_wikipedia_language": "en",
+    "spire_wikipedia_language": "auto",
     "spire_wikipedia_random_page": True,
     "spire_wikipedia_timeout": 6,
     "spire_reflective_probability": 0.5,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.8.
+"""MAICA GUI v0.11.9.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -49,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.8'
+APP_VERSION = '0.11.9'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -58,7 +58,7 @@ from assets import AssetManager, normalize_emotion  # noqa: E402
 from diagnostics import collect_report  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
 from stt import create_stt  # noqa: E402
-from tts import create_tts  # noqa: E402
+from tts import create_tts, redact_secret  # noqa: E402
 
 
 PROFILE_FIELDS = ('player_name', 'birthday', 'location', 'nicknames', 'affection')
@@ -353,6 +353,7 @@ class SettingsDialog(QDialog):
         self.response_output_mode = QComboBox()
         self.response_output_mode.addItems(RESPONSE_OUTPUT_MODES)
         self.metadata_extract_enabled = QCheckBox('Extract emotion/action metadata with a second light call')
+        self.context_translation_enabled = QCheckBox('Translate cross-language memories before prompt injection')
         self.response_planner_mode = QComboBox()
         self.response_planner_mode.addItems(PLANNER_MODES)
         self.example_bank_limit = QSpinBox()
@@ -404,7 +405,7 @@ class SettingsDialog(QDialog):
 
         form.addRow('API base', self.api_base)
         form.addRow('Model', self.model)
-        form.addRow('Language', self.language)
+        form.addRow('Reply language', self.language)
         form.addRow('Temperature', self.temperature)
         form.addRow('Top P', self.top_p)
         form.addRow('Max tokens', self.max_tokens)
@@ -413,6 +414,7 @@ class SettingsDialog(QDialog):
         form.addRow('', self.streaming_enabled)
         form.addRow('Response output', self.response_output_mode)
         form.addRow('', self.metadata_extract_enabled)
+        form.addRow('', self.context_translation_enabled)
         form.addRow('Planner mode', self.response_planner_mode)
         form.addRow('Example limit', self.example_bank_limit)
         form.addRow('Example min score', self.example_bank_min_score)
@@ -477,6 +479,7 @@ class SettingsDialog(QDialog):
         self.streaming_enabled.setChecked(bool(config.get('streaming_enabled', False)))
         self._set_combo(self.response_output_mode, str(config.get('response_output_mode') or 'dual'))
         self.metadata_extract_enabled.setChecked(bool(config.get('metadata_extract_enabled', True)))
+        self.context_translation_enabled.setChecked(bool(config.get('context_translation_enabled', True)))
         self._set_combo(self.response_planner_mode, str(config.get('response_planner_mode') or 'lite'))
         self.example_bank_limit.setValue(int(config.get('example_bank_limit') or 3))
         self.example_bank_min_score.setValue(float(config.get('example_bank_min_score') or 150))
@@ -527,6 +530,7 @@ class SettingsDialog(QDialog):
             'streaming_enabled': self.streaming_enabled.isChecked(),
             'response_output_mode': self.response_output_mode.currentText(),
             'metadata_extract_enabled': self.metadata_extract_enabled.isChecked(),
+            'context_translation_enabled': self.context_translation_enabled.isChecked(),
             'response_planner_mode': self.response_planner_mode.currentText(),
             'example_bank_limit': self.example_bank_limit.value(),
             'example_bank_min_score': self.example_bank_min_score.value(),
@@ -1123,7 +1127,7 @@ class MainWindow(QMainWindow):
             try:
                 result = self.stt.listen()
             except Exception as exc:
-                result = {'ok': False, 'text': '', 'error': str(exc)}
+                result = {'ok': False, 'text': '', 'error': redact_secret(str(exc))}
             self.stt_finished.emit(result)
 
         threading.Thread(target=run, daemon=True).start()
@@ -1200,8 +1204,8 @@ class MainWindow(QMainWindow):
             Path(target).write_text(json.dumps(report, ensure_ascii=True, indent=2), encoding='utf-8')
             self.add_system_message(f'Diagnostics exported: {target}')
         except Exception as exc:
-            self.add_system_message(f'Diagnostics export failed: {exc}')
-            QMessageBox.warning(self, 'Diagnostics export failed', str(exc))
+            self.add_system_message(f'Diagnostics export failed: {redact_secret(str(exc))}')
+            QMessageBox.warning(self, 'Diagnostics export failed', redact_secret(str(exc)))
 
     def _handle_data_ready(self, payload: dict[str, Any]) -> None:
         if not payload.get('ok', True):

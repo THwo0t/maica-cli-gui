@@ -7,6 +7,7 @@ import json
 import random
 from typing import Any
 
+from language_runtime import target_language
 from wiki_spire import fetch_wikipedia_topic
 
 
@@ -69,7 +70,7 @@ def _fetch_wiki(config: dict[str, Any], query: str, rng: Any, random_page: bool 
     try:
         return fetch_wikipedia_topic(
             query,
-            str(config.get('spire_wikipedia_language') or config.get('language') or 'zh'),
+            target_language(config) if str(config.get('spire_wikipedia_language') or 'auto').lower() == 'auto' else str(config.get('spire_wikipedia_language') or target_language(config)),
             float(config.get('spire_wikipedia_timeout', 6)),
             rng,
             random_page=random_page,

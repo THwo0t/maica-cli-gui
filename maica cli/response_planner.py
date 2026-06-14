@@ -254,6 +254,9 @@ def build_response_plan(
         'weight': bank_debug.get('weight'),
         'selected_intents': bank_debug.get('selected_intents', []),
         'vector_error': bank_debug.get('vector_error', ''),
+        'target_language': bank_debug.get('target_language', ''),
+        'language_filtered_count': bank_debug.get('language_filtered_count', 0),
+        'source_paths': bank_debug.get('source_paths', []),
     }
     plan['planner_mode'] = 'example_only' if planner_mode == 'example_only' else 'lite'
     if bool(config.get('response_planner_debug', True)):

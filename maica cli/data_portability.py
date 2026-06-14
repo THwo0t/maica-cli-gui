@@ -14,7 +14,7 @@ from typing import Any
 from store import Store
 
 
-EXPORT_TABLES = ('profile', 'memories', 'facts', 'summaries', 'events')
+EXPORT_TABLES = ('profile', 'memories', 'facts', 'summaries', 'events', 'translation_cache')
 
 
 def _rows(conn: sqlite3.Connection, table: str) -> list[dict[str, Any]]:
@@ -77,10 +77,17 @@ def import_user_data(store: Store, source_zip: str | Path, replace: bool = False
                 (str(item.get('key')), str(item.get('value') or '')),
             )
             counts['profile'] = counts.get('profile', 0) + 1
-    _append_rows(conn, 'memories', tables.get('memories', []), ('text', 'tags', 'importance', 'created_at', 'updated_at'), counts)
-    _append_rows(conn, 'facts', tables.get('facts', []), ('category', 'text', 'source', 'importance', 'created_at', 'updated_at'), counts)
-    _append_rows(conn, 'summaries', tables.get('summaries', []), ('kind', 'text', 'source_start_id', 'source_end_id', 'importance', 'created_at', 'updated_at'), counts)
+    _append_rows(conn, 'memories', tables.get('memories', []), ('text', 'tags', 'importance', 'language', 'created_at', 'updated_at'), counts)
+    _append_rows(conn, 'facts', tables.get('facts', []), ('category', 'text', 'source', 'importance', 'language', 'created_at', 'updated_at'), counts)
+    _append_rows(conn, 'summaries', tables.get('summaries', []), ('kind', 'text', 'source_start_id', 'source_end_id', 'importance', 'language', 'created_at', 'updated_at'), counts)
     _append_rows(conn, 'events', tables.get('events', []), ('type', 'payload', 'created_at'), counts)
+    _append_rows(
+        conn,
+        'translation_cache',
+        tables.get('translation_cache', []),
+        ('source_kind', 'source_id', 'source_hash', 'target_language', 'translated_text', 'created_at', 'updated_at'),
+        counts,
+    )
     conn.commit()
     store.add_event('user_data_imported', {'source': str(source), 'replace': replace, 'backup': str(backup) if backup else ''})
     return {'ok': True, 'backup': str(backup) if backup else '', 'counts': counts}

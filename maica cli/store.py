@@ -10,11 +10,12 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from language_runtime import source_hash, target_language, text_language
 from persona import relationship_stage
 from text_utils import split_query_tokens
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 PROFILE_DEFAULTS = {
     'player_name': 'player',
@@ -52,6 +53,7 @@ class Store:
                 text TEXT NOT NULL,
                 tags TEXT DEFAULT '',
                 importance INTEGER DEFAULT 1,
+                language TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -60,6 +62,7 @@ class Store:
                 session_id INTEGER DEFAULT 1,
                 role TEXT NOT NULL,
                 content TEXT NOT NULL,
+                language TEXT DEFAULT '',
                 created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS events (
@@ -74,6 +77,7 @@ class Store:
                 text TEXT NOT NULL,
                 source TEXT DEFAULT 'user',
                 importance INTEGER DEFAULT 2,
+                language TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -84,6 +88,7 @@ class Store:
                 source_start_id INTEGER DEFAULT 0,
                 source_end_id INTEGER DEFAULT 0,
                 importance INTEGER DEFAULT 2,
+                language TEXT DEFAULT '',
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             );
@@ -96,6 +101,17 @@ class Store:
                 total_tokens INTEGER DEFAULT 0,
                 estimated_cost REAL DEFAULT 0,
                 created_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS translation_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_kind TEXT NOT NULL,
+                source_id INTEGER DEFAULT 0,
+                source_hash TEXT NOT NULL,
+                target_language TEXT NOT NULL,
+                translated_text TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(source_kind, source_id, source_hash, target_language)
             );
             CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY,
@@ -115,6 +131,24 @@ class Store:
 
     def run_migrations(self, old_version: int) -> None:
         """Apply small idempotent migrations for older local databases."""
+        if old_version < 4:
+            for table, column in (
+                ('memories', 'language'),
+                ('messages', 'language'),
+                ('facts', 'language'),
+                ('summaries', 'language'),
+            ):
+                self._ensure_column(table, column, "TEXT DEFAULT ''")
+            self.conn.executescript(
+                """
+                CREATE INDEX IF NOT EXISTS idx_memories_language ON memories(language, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_messages_language ON messages(language, session_id, id);
+                CREATE INDEX IF NOT EXISTS idx_facts_language ON facts(language, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_summaries_language ON summaries(language, updated_at);
+                CREATE INDEX IF NOT EXISTS idx_translation_cache_lookup
+                    ON translation_cache(source_kind, source_id, source_hash, target_language);
+                """
+            )
         if old_version < 3:
             self.conn.executescript(
                 """
@@ -130,6 +164,11 @@ class Store:
                 'INSERT OR REPLACE INTO schema_migrations(version, applied_at, note) VALUES (?, ?, ?)',
                 (SCHEMA_VERSION, self.now(), f'upgraded from {old_version}'),
             )
+
+    def _ensure_column(self, table: str, column: str, definition: str) -> None:
+        rows = self.conn.execute(f'PRAGMA table_info({table})').fetchall()
+        if column not in {row['name'] for row in rows}:
+            self.conn.execute(f'ALTER TABLE {table} ADD COLUMN {column} {definition}')
 
     def close(self) -> None:
         self.conn.close()
@@ -230,11 +269,12 @@ class Store:
         self.add_event('affection', {'value': value})
         return value
 
-    def add_memory(self, text: str, tags: str = '', importance: int = 1) -> int:
+    def add_memory(self, text: str, tags: str = '', importance: int = 1, language: str = '') -> int:
         now = self.now()
+        language = target_language(language) if language else text_language(text)
         cur = self.conn.execute(
-            'INSERT INTO memories(text, tags, importance, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
-            (text.strip(), tags, int(importance), now, now),
+            'INSERT INTO memories(text, tags, importance, language, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
+            (text.strip(), tags, int(importance), language, now, now),
         )
         self.conn.commit()
         memory_id = int(cur.lastrowid)
@@ -334,11 +374,12 @@ class Store:
         self.mark_memory_vector_dirty('memories_cleared')
         return deleted
 
-    def add_fact(self, text: str, category: str = 'custom', source: str = 'user', importance: int = 2) -> int:
+    def add_fact(self, text: str, category: str = 'custom', source: str = 'user', importance: int = 2, language: str = '') -> int:
         now = self.now()
+        language = target_language(language) if language else text_language(text)
         cur = self.conn.execute(
-            'INSERT INTO facts(category, text, source, importance, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)',
-            (category.strip() or 'custom', text.strip(), source.strip() or 'user', int(importance), now, now),
+            'INSERT INTO facts(category, text, source, importance, language, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+            (category.strip() or 'custom', text.strip(), source.strip() or 'user', int(importance), language, now, now),
         )
         self.conn.commit()
         fact_id = int(cur.lastrowid)
@@ -386,10 +427,11 @@ class Store:
         self.add_event('facts_cleared', {'count': deleted})
         return deleted
 
-    def add_message(self, role: str, content: str, session_id: int = 1) -> None:
+    def add_message(self, role: str, content: str, session_id: int = 1, language: str = '') -> None:
+        language = target_language(language) if language else text_language(content)
         self.conn.execute(
-            'INSERT INTO messages(session_id, role, content, created_at) VALUES (?, ?, ?, ?)',
-            (session_id, role, content, self.now()),
+            'INSERT INTO messages(session_id, role, content, language, created_at) VALUES (?, ?, ?, ?, ?)',
+            (session_id, role, content, language, self.now()),
         )
         self.conn.commit()
 
@@ -419,12 +461,13 @@ class Store:
         self.add_event('messages_cleared', {'count': deleted})
         return deleted
 
-    def add_summary(self, text: str, kind: str = 'session', source_start_id: int = 0, source_end_id: int = 0, importance: int = 2) -> int:
+    def add_summary(self, text: str, kind: str = 'session', source_start_id: int = 0, source_end_id: int = 0, importance: int = 2, language: str = '') -> int:
         now = self.now()
+        language = target_language(language) if language else text_language(text)
         cur = self.conn.execute(
-            'INSERT INTO summaries(kind, text, source_start_id, source_end_id, importance, created_at, updated_at) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?)',
-            (kind, text.strip(), int(source_start_id), int(source_end_id), int(importance), now, now),
+            'INSERT INTO summaries(kind, text, source_start_id, source_end_id, importance, language, created_at, updated_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+            (kind, text.strip(), int(source_start_id), int(source_end_id), int(importance), language, now, now),
         )
         self.conn.commit()
         summary_id = int(cur.lastrowid)
@@ -439,6 +482,29 @@ class Store:
 
     def last_summary_source_end_id(self) -> int:
         row = self.conn.execute('SELECT MAX(source_end_id) AS value FROM summaries').fetchone()
+        return int(row['value'] or 0)
+
+    def get_translation(self, source_kind: str, source_id: int, source_text: str, language: str) -> str:
+        row = self.conn.execute(
+            'SELECT translated_text FROM translation_cache '
+            'WHERE source_kind = ? AND source_id = ? AND source_hash = ? AND target_language = ?',
+            (source_kind, int(source_id), source_hash(source_text), target_language(language)),
+        ).fetchone()
+        return str(row['translated_text']) if row else ''
+
+    def set_translation(self, source_kind: str, source_id: int, source_text: str, language: str, translated_text: str) -> None:
+        now = self.now()
+        self.conn.execute(
+            'INSERT INTO translation_cache(source_kind, source_id, source_hash, target_language, translated_text, created_at, updated_at) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?) '
+            'ON CONFLICT(source_kind, source_id, source_hash, target_language) DO UPDATE SET '
+            'translated_text = excluded.translated_text, updated_at = excluded.updated_at',
+            (source_kind, int(source_id), source_hash(source_text), target_language(language), translated_text.strip(), now, now),
+        )
+        self.conn.commit()
+
+    def translation_cache_count(self) -> int:
+        row = self.conn.execute('SELECT COUNT(*) AS value FROM translation_cache').fetchone()
         return int(row['value'] or 0)
 
     def add_token_usage(self, source: str, model: str = '', prompt_tokens: int = 0, completion_tokens: int = 0, total_tokens: int = 0, estimated_cost: float = 0.0) -> int:
@@ -485,8 +551,9 @@ class Store:
             DELETE FROM summaries;
             DELETE FROM token_usage;
             DELETE FROM events;
+            DELETE FROM translation_cache;
             DELETE FROM profile;
-            DELETE FROM sqlite_sequence WHERE name IN ('memories', 'messages', 'facts', 'summaries', 'token_usage', 'events');
+            DELETE FROM sqlite_sequence WHERE name IN ('memories', 'messages', 'facts', 'summaries', 'token_usage', 'events', 'translation_cache');
             """
         )
         for key, value in PROFILE_DEFAULTS.items():

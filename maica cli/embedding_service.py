@@ -24,6 +24,7 @@ from embedding_index import (
     search_vector_examples,
 )
 from store import Store
+from text_utils import redact_secret
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -82,7 +83,7 @@ class Handler(BaseHTTPRequestHandler):
                 }
             )
         except Exception as exc:
-            self.send_json({"ok": False, "error": str(exc)}, 500)
+            self.send_json({"ok": False, "error": redact_secret(str(exc))}, 500)
 
     def do_POST(self) -> None:
         try:
@@ -95,7 +96,7 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 self.send_json({"ok": False, "error": "not found"}, 404)
         except Exception as exc:
-            self.send_json({"ok": False, "error": str(exc)}, 500)
+            self.send_json({"ok": False, "error": redact_secret(str(exc))}, 500)
 
     def handle_search_examples(self) -> None:
         payload = read_body(self)

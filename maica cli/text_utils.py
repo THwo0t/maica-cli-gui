@@ -45,6 +45,20 @@ def cjk_ratio(text: str) -> float:
     return sum(1 for char in chars if '\u4e00' <= char <= '\u9fff') / len(chars)
 
 
+def redact_secret(text: str, *secrets: str) -> str:
+    """Remove API keys and bearer tokens before text reaches UI/log output."""
+    out = str(text or '')
+    for secret in secrets:
+        secret = str(secret or '').strip()
+        if secret and len(secret) >= 6:
+            out = out.replace(secret, '***')
+    out = re.sub(r'(?i)(authorization\s*:\s*bearer\s+)\S+', r'\1***', out)
+    out = re.sub(r'(?i)(bearer)\s+\S+', r'\1 ***', out)
+    out = re.sub(r'(?i)(sk-)[A-Za-z0-9._\-]{6,}', r'\1***', out)
+    out = re.sub(r'(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[=:]\s*)[A-Za-z0-9._\-]{6,}', r'\1***', out)
+    return out
+
+
 def extract_json_object(text: str) -> dict[str, Any] | None:
     """Extract the first JSON object from a model reply."""
     text = str(text or '').strip()

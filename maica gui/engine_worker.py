@@ -27,6 +27,7 @@ from mfocus import status_summary  # noqa: E402
 from embedding_service_client import build_service_memory_index  # noqa: E402
 from config_io import save_json  # noqa: E402
 from data_portability import export_user_data, import_user_data, preview_user_data  # noqa: E402
+from text_utils import redact_secret  # noqa: E402
 
 
 class GuiEngineWorker(QObject):
@@ -51,6 +52,18 @@ class GuiEngineWorker(QObject):
         self.db_path = Path(db_path).resolve() if db_path else None
         self.app_dir = Path(app_dir).resolve() if app_dir else CLI_DIR
 
+    def _safe_error_text(self, exc: Exception | str, with_traceback: bool = False) -> str:
+        config = self.engine.config if self.engine is not None else {}
+        text = str(exc)
+        if with_traceback:
+            text = f'{text}\n{traceback.format_exc()}'
+        return redact_secret(
+            text,
+            config.get('api_key', ''),
+            config.get('tts_bailian_api_key', ''),
+            config.get('stt_bailian_api_key', ''),
+        )
+
     @Slot()
     def initialize(self) -> None:
         try:
@@ -65,7 +78,7 @@ class GuiEngineWorker(QObject):
             self.ready.emit({'ok': True, 'error': ''})
             self._prewarm_embeddings_if_needed()
         except Exception as exc:
-            self.ready.emit({'ok': False, 'error': f'{exc}\n{traceback.format_exc()}'})
+            self.ready.emit({'ok': False, 'error': self._safe_error_text(exc, with_traceback=True)})
 
     def _apply_gui_safety_overrides(self) -> None:
         if self.engine is None:
@@ -140,7 +153,7 @@ class GuiEngineWorker(QObject):
                 creationflags=flags,
             )
         except Exception as exc:
-            self.status.emit(f'Embedding service failed to start: {exc}')
+            self.status.emit(f'Embedding service failed to start: {self._safe_error_text(exc)}')
             return
         deadline = time.time() + 3.0
         while time.time() < deadline:
@@ -283,7 +296,7 @@ class GuiEngineWorker(QObject):
                     'action': {},
                     'mtrigger_notices': [],
                     'debug': {},
-                    'error': f'{exc}\n{traceback.format_exc()}',
+                    'error': self._safe_error_text(exc, with_traceback=True),
                 }
             )
 
@@ -392,7 +405,7 @@ class GuiEngineWorker(QObject):
                     'ok': False,
                     'action': action,
                     'notice': '',
-                    'error': f'{exc}\n{traceback.format_exc()}',
+                    'error': self._safe_error_text(exc, with_traceback=True),
                 }
             )
 
@@ -409,7 +422,7 @@ class GuiEngineWorker(QObject):
                 result = build_service_memory_index(config)
                 return f'Memory vector index rebuilt by service ({result.get("count", 0)} memories).'
             except Exception as exc:
-                return f'Memory vector rebuild pending; service failed: {exc}'
+                return f'Memory vector rebuild pending; service failed: {self._safe_error_text(exc)}'
         if config.get('gui_disable_thread_embeddings', True):
             return 'Memory vector index marked dirty. Enable embedding service or rebuild from CLI.'
         try:
@@ -418,7 +431,7 @@ class GuiEngineWorker(QObject):
             engine.store.add_event('memory_vector_rebuilt', {'count': result.get('count'), 'mode': 'gui_worker'})
             return f'Memory vector index rebuilt ({result.get("count", 0)} memories).'
         except Exception as exc:
-            return f'Memory vector rebuild pending: {exc}'
+            return f'Memory vector rebuild pending: {self._safe_error_text(exc)}'
 
     def _data_snapshot(self, engine: MaicaEngine) -> dict[str, Any]:
         profile = engine.store.get_profile()
@@ -429,6 +442,7 @@ class GuiEngineWorker(QObject):
             'facts': [dict(row) for row in engine.store.search_facts('', 200)],
             'events': [dict(row) for row in engine.store.recent_events(30)],
             'summaries': [dict(row) for row in engine.store.recent_summaries(20)],
+            'translation_cache_count': engine.store.translation_cache_count(),
             'recent_messages': engine.store.recent_messages(int(engine.config.get('gui_load_recent_messages', 20))),
             'status': status_summary(engine.store, engine.config),
             'token_usage': engine.store.token_usage_summary(),
@@ -450,10 +464,13 @@ class GuiEngineWorker(QObject):
             'streaming_enabled',
             'response_output_mode',
             'metadata_extract_enabled',
+            'context_translation_enabled',
             'response_planner_mode',
             'example_bank_limit',
             'example_bank_weight',
             'example_bank_min_score',
+            'example_bank_paths_by_language',
+            'example_bank_core_paths_by_language',
             'mfocus_mode',
             'mtrigger_mode',
             'tts_enabled',
@@ -510,6 +527,7 @@ class GuiEngineWorker(QObject):
             'streaming_enabled': bool,
             'response_output_mode': str,
             'metadata_extract_enabled': bool,
+            'context_translation_enabled': bool,
             'response_planner_mode': str,
             'example_bank_limit': int,
             'example_bank_weight': float,

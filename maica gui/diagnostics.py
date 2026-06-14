@@ -26,6 +26,10 @@ ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 CONFIG_PATH = CLI_DIR / 'config.json'
 DB_PATH = CLI_DIR / 'maica_cli.db'
 
+if str(GUI_DIR) not in sys.path:
+    sys.path.insert(0, str(GUI_DIR))
+from tts import redact_secret
+
 SAFE_CONFIG_KEYS = (
     'api_base',
     'model',
@@ -77,11 +81,11 @@ def command_output(args: list[str], timeout: int = 5) -> dict[str, Any]:
         return {
             'ok': completed.returncode == 0,
             'returncode': completed.returncode,
-            'stdout': completed.stdout.strip(),
-            'stderr': completed.stderr.strip(),
+            'stdout': redact_secret(completed.stdout.strip()),
+            'stderr': redact_secret(completed.stderr.strip()),
         }
     except Exception as exc:
-        return {'ok': False, 'error': repr(exc)}
+        return {'ok': False, 'error': redact_secret(repr(exc))}
 
 
 def resolve_command(name: str) -> str:
@@ -110,7 +114,7 @@ def safe_config_snapshot() -> dict[str, Any]:
         with CONFIG_PATH.open('r', encoding='utf-8-sig') as handle:
             config = json.load(handle)
     except Exception as exc:
-        return {'exists': True, 'load_error': repr(exc)}
+        return {'exists': True, 'load_error': redact_secret(repr(exc))}
 
     snapshot: dict[str, Any] = {'exists': True, 'safe_values': {}, 'secret_fields_present': []}
     for key in SAFE_CONFIG_KEYS:
@@ -148,7 +152,7 @@ def gh_auth_snapshot() -> dict[str, Any]:
 def collect_report() -> dict[str, Any]:
     return {
         'app': 'MAICA CLI GUI',
-        'diagnostics_version': '0.11.8',
+        'diagnostics_version': '0.11.9',
         'python': {
             'executable': sys.executable,
             'version': sys.version,

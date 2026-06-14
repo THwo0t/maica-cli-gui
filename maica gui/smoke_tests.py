@@ -44,6 +44,9 @@ def compile_python() -> None:
         CLI_DIR / 'mfocus.py',
         CLI_DIR / 'response_planner.py',
         CLI_DIR / 'example_bank.py',
+        CLI_DIR / 'language_runtime.py',
+        CLI_DIR / 'context_translation.py',
+        CLI_DIR / 'maica_dataset_cleaner.py',
     ]
     for path in files:
         with tempfile.NamedTemporaryFile(suffix='.pyc', delete=False) as handle:
@@ -175,16 +178,27 @@ def test_text_helpers() -> None:
     check('api_key' in paraformer_no_key['error'] or 'websocket' in paraformer_no_key['error'].lower(),
           'Paraformer STT should explain the missing key or websocket dependency')
     # The STT key falls back to the TTS Bailian key so one key serves both.
-    check(DashScopeParaformerSTT({'tts_bailian_api_key': 'sk-fallback'})._api_key() == 'sk-fallback',
+    fake_key = 'sk-' + 'fallback'
+    check(DashScopeParaformerSTT({'tts_bailian_api_key': fake_key})._api_key() == fake_key,
           'Paraformer STT should reuse tts_bailian_api_key when stt key is unset')
 
     # API keys / bearer tokens must never survive into surfaced error text.
-    leak = 'handshake to wss://... failed, headers: Authorization: Bearer sk-secret123456 extra'
-    scrubbed = redact_secret(leak, 'sk-secret123456')
-    check('sk-secret123456' not in scrubbed, 'redact_secret must remove the raw API key')
+    fake_secret = 'sk-' + 'secret123456'
+    leak = 'handshake to wss://... failed, headers: Authorization: Bearer ' + fake_secret + ' extra'
+    scrubbed = redact_secret(leak, fake_secret)
+    check(fake_secret not in scrubbed, 'redact_secret must remove the raw API key')
     check('Bearer ***' in scrubbed, 'redact_secret must mask the bearer token')
-    check('sk-secret123456' not in redact_secret('error sk-secret123456 boom', ''),
+    check(fake_secret not in redact_secret('error ' + fake_secret + ' boom', ''),
           'redact_secret must mask sk- tokens even without an explicit secret')
+    import importlib.util
+    cli_text_utils_path = CLI_DIR / 'text_utils.py'
+    spec = importlib.util.spec_from_file_location('maica_cli_text_utils_for_test', cli_text_utils_path)
+    check(spec is not None and spec.loader is not None, 'CLI text_utils module should be loadable')
+    cli_text_utils = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(cli_text_utils)
+    cli_scrubbed = cli_text_utils.redact_secret('api_key=' + fake_secret + ' Authorization: Bearer ' + fake_secret)
+    check(fake_secret not in cli_scrubbed, 'CLI redact_secret must remove API keys')
+    check('Bearer ***' in cli_scrubbed, 'CLI redact_secret must mask bearer tokens')
 
     report = collect_report()
     output = json.dumps(report, ensure_ascii=True)
@@ -442,6 +456,95 @@ def test_prompt_language_systems() -> None:
           'history filtering must be a no-op when disabled')
 
 
+
+def test_dual_example_banks() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from example_bank import select_examples
+    from store import Store
+    from text_utils import contains_cjk, cjk_ratio
+
+    en_path = CLI_DIR / 'data' / 'dialogue_examples_en.jsonl'
+    zh_path = CLI_DIR / 'data' / 'dialogue_examples_zh.jsonl'
+    check(en_path.exists(), 'English example bank missing')
+    check(zh_path.exists(), 'Chinese example bank missing')
+    en_lines = [json.loads(line) for line in en_path.read_text(encoding='utf-8-sig').splitlines() if line.strip()][:80]
+    zh_lines = [json.loads(line) for line in zh_path.read_text(encoding='utf-8-sig').splitlines() if line.strip()][:80]
+    check(en_lines and zh_lines, 'example banks should not be empty')
+    check(all(row.get('language') == 'en' for row in en_lines), 'English bank language tag mismatch')
+    check(all(row.get('language') == 'zh' for row in zh_lines), 'Chinese bank language tag mismatch')
+    check(not any(contains_cjk(str(row.get('user', '')) + str(row.get('assistant', ''))) for row in en_lines), 'English bank contains CJK sample text')
+    check(any(cjk_ratio(str(row.get('user', '')) + str(row.get('assistant', ''))) > 0.08 for row in zh_lines), 'Chinese bank lacks Chinese sample text')
+
+    with tempfile.TemporaryDirectory(prefix='maica-smoke-bank-') as temp_dir:
+        store = Store(Path(temp_dir) / 'bank.db')
+        try:
+            config = dict(DEFAULT_CONFIG)
+            config.update({'language': 'en', 'embedding_enabled': False, 'example_bank_min_score': 0})
+            plan = {'category': 'love', 'intent': 'direct_love', 'mode': 'love_short_intimate', 'emotion': 'shy'}
+            examples = select_examples('I love you', plan, store, config)
+            check(examples, 'English example selection returned nothing')
+            check(all(not contains_cjk(item.get('assistant', '')) for item in examples), 'English example selection leaked Chinese')
+            config['language'] = 'zh'
+            examples = select_examples('我爱你', plan, store, config)
+            check(examples, 'Chinese example selection returned nothing')
+            check(all(cjk_ratio(item.get('assistant', '')) > 0.08 for item in examples), 'Chinese example selection leaked non-Chinese')
+        finally:
+            store.close()
+
+
+def test_context_translation_cache() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from mfocus import build_messages
+    from store import Store
+
+    class TranslationFakeClient:
+        def __init__(self) -> None:
+            self.translation_calls = 0
+
+        def chat_with_usage(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+            self.translation_calls += 1
+            payload = {
+                'items': [
+                    {'id': 'memory:1:0', 'text': 'The user has final exam pressure this month.'},
+                    {'id': 'sfe_fact:0:0', 'text': 'The user has a Chinese-language saved fact.'},
+                ]
+            }
+            return {'content': json.dumps(payload), 'usage': {'prompt_tokens': 3, 'completion_tokens': 3, 'total_tokens': 6}, 'model': 'fake'}
+
+    with tempfile.TemporaryDirectory(prefix='maica-smoke-translation-cache-') as temp_dir:
+        store = Store(Path(temp_dir) / 'translation.db')
+        try:
+            store.add_memory('我这个月有期末考试压力。', 'test', 3, language='zh')
+            config = dict(DEFAULT_CONFIG)
+            config.update(
+                {
+                    'language': 'en',
+                    'api_key_required': False,
+                    'jsonl_logs_enabled': False,
+                    'style_enabled': False,
+                    'response_planner_enabled': False,
+                    'embedding_enabled': False,
+                    'memory_embedding_enabled': False,
+                    'embedding_service_enabled': False,
+                    'mfocus_sfe_enabled': False,
+                    'context_translation_enabled': True,
+                }
+            )
+            fake = TranslationFakeClient()
+            messages, plan = build_messages(store, config, '考试压力', fake)
+            system = messages[0]['content']
+            check('The user has final exam pressure this month.' in system, 'translated memory missing from prompt')
+            check('我这个月有期末考试压力' not in system, 'raw Chinese memory leaked into English prompt')
+            check(plan['context_translation']['translated'] == 1, 'first pass should translate one memory')
+            check(fake.translation_calls == 1, 'translation API should be called once')
+            messages, plan = build_messages(store, config, '考试压力', fake)
+            check(fake.translation_calls == 1, 'translation cache was not reused')
+            check(plan['context_translation']['cache_hits'] >= 1, 'translation cache hit not reported')
+        finally:
+            store.close()
+
 def test_package_audit() -> None:
     with tempfile.TemporaryDirectory(prefix='maica-package-audit-') as temp_dir:
         safe_root = Path(temp_dir)
@@ -588,6 +691,10 @@ def main() -> int:
     print('engine_language_rewrite ok')
     test_prompt_language_systems()
     print('prompt_language_systems ok')
+    test_dual_example_banks()
+    print('dual_example_banks ok')
+    test_context_translation_cache()
+    print('context_translation_cache ok')
     test_package_audit()
     print('package_audit ok')
     test_gui_offscreen()

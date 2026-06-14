@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from text_utils import redact_secret
+
 
 def service_base_url(config: dict[str, Any]) -> str:
     host = str(config.get("embedding_service_host") or "127.0.0.1").strip() or "127.0.0.1"
@@ -35,7 +37,7 @@ def post_json(config: dict[str, Any], path: str, payload: dict[str, Any]) -> dic
         with urllib.request.urlopen(request, timeout=service_timeout(config)) as response:
             body = response.read().decode("utf-8", errors="replace")
     except urllib.error.URLError as exc:
-        raise RuntimeError(f"embedding service request failed: {exc}") from exc
+        raise RuntimeError(f"embedding service request failed: {redact_secret(str(exc))}") from exc
     result = json.loads(body)
     if not isinstance(result, dict):
         raise RuntimeError("embedding service returned a non-object response")

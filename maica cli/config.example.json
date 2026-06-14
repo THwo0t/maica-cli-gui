@@ -41,6 +41,7 @@
   "response_output_mode": "dual",
   "metadata_extract_enabled": true,
   "language_enforce_rewrite": true,
+    "context_translation_enabled": true,
   "example_bank_enabled": true,
   "example_bank_core_paths": [
     "data/dialogue_examples_core.jsonl"
@@ -79,7 +80,7 @@
   "embedding_service_timeout": 8,
   "spire_wikipedia_enabled": true,
   "spire_wikipedia_probability": 0.35,
-  "spire_wikipedia_language": "en",
+  "spire_wikipedia_language": "auto",
   "spire_wikipedia_random_page": true,
   "spire_wikipedia_timeout": 6,
   "spire_reflective_probability": 0.5,

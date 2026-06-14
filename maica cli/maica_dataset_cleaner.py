@@ -17,6 +17,10 @@ from style import categorize_user_input
 
 APP_DIR = Path(__file__).resolve().parent
 DEFAULT_SOURCES = ["moni_dataset_2603.jsonl", "ds_new.jsonl"]
+DEFAULT_SOURCES_BY_LANGUAGE = {
+    "zh": ["moni_dataset_2603.jsonl", "ds_new.jsonl"],
+    "en": ["moni_dataset_en_2603.jsonl"],
+}
 EMOTION_HINTS = {
     "激动": "happy",
     "期待": "happy",
@@ -38,6 +42,21 @@ EMOTION_HINTS = {
     "思考": "thinking",
     "沉思": "thinking",
     "调皮": "playful",
+    "excited": "happy",
+    "happy": "happy",
+    "smile": "smile",
+    "grin": "smile",
+    "gaze": "gentle",
+    "worry": "concerned",
+    "worried": "concerned",
+    "upset": "sad",
+    "sad": "sad",
+    "awkward": "shy",
+    "shy": "shy",
+    "think": "thinking",
+    "thinking": "thinking",
+    "angry": "angry",
+    "dissatisfied": "angry",
 }
 
 
@@ -170,7 +189,24 @@ def quality_for(user: str, assistant: str, category: str, emotion: str) -> int:
     return max(1, min(5, quality))
 
 
-def notes_for(category: str, emotion: str, source: str) -> str:
+def notes_for(category: str, emotion: str, source: str, language: str = "zh") -> str:
+    if language == "en":
+        labels = {
+            "greeting": "short and close, good for daily openings",
+            "farewell": "gentle closing, good for goodbye or good night",
+            "love": "intimate response that catches affection naturally",
+            "hug": "verbal closeness and comfort",
+            "comfort": "meet the feeling first, then give companionship",
+            "serious": "clear explanation while staying warm and close",
+            "memory": "natural recall and remembered feeling",
+            "event": "special event or holiday atmosphere",
+            "playful": "light playful teasing",
+            "daily": "ordinary daily rhythm reference",
+        }
+        base = labels.get(category, "ordinary dialogue rhythm reference")
+        if emotion != "neutral":
+            base += f", emotional color: {emotion}"
+        return f"{base}; source: {source}"
     labels = {
         "greeting": "短、亲近，适合日常开场",
         "farewell": "温柔收束，适合告别或晚安",
@@ -189,7 +225,7 @@ def notes_for(category: str, emotion: str, source: str) -> str:
     return f"{base}；来源: {source}"
 
 
-def clean_source_file(path: Path) -> list[dict[str, Any]]:
+def clean_source_file(path: Path, language: str = "zh") -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with path.open("r", encoding="utf-8-sig") as handle:
         for line in handle:
@@ -216,7 +252,7 @@ def clean_source_file(path: Path) -> list[dict[str, Any]]:
             category = normalize_category(categorize_user_input(user), user, assistant)
             mode = mode_for(category, emotion)
             source = path.name
-            notes = notes_for(category, emotion, source)
+            notes = notes_for(category, emotion, source, language)
             row = {
                 "category": category,
                 "mode": mode,
@@ -225,6 +261,7 @@ def clean_source_file(path: Path) -> list[dict[str, Any]]:
                 "user": user,
                 "assistant": assistant,
                 "quality": quality_for(user, assistant, category, emotion),
+                "language": language,
                 "source": source,
                 "notes": notes,
             }
@@ -253,10 +290,12 @@ def clean_maica_dataset(
     source_root: str | Path = "../MAICA_ds_basis",
     output_path: str | Path = "data/dialogue_examples_maica_cleaned.jsonl",
     sources: list[str] | None = None,
+    language: str = "zh",
 ) -> dict[str, Any]:
+    language = "zh" if str(language or "zh").lower().startswith("zh") else "en"
     root = resolve_path(source_root)
     output = resolve_path(output_path)
-    sources = sources or DEFAULT_SOURCES
+    sources = sources or DEFAULT_SOURCES_BY_LANGUAGE.get(language, DEFAULT_SOURCES)
     rows: list[dict[str, Any]] = []
     read_files: list[str] = []
     for source in sources:
@@ -264,7 +303,7 @@ def clean_maica_dataset(
         if not path.exists():
             continue
         read_files.append(str(path))
-        rows.extend(clean_source_file(path))
+        rows.extend(clean_source_file(path, language))
     rows = dedupe_rows(rows)
     rows.sort(key=lambda item: (str(item["category"]), -int(item["quality"]), str(item["source"]), str(item["user"])))
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -282,6 +321,7 @@ def clean_maica_dataset(
         "sources": read_files,
         "output": str(output),
         "rows": len(rows),
+        "language": language,
         "by_category": counts,
         "by_quality": quality_counts,
     }
@@ -290,10 +330,18 @@ def clean_maica_dataset(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Clean MAICA_ds_basis into dialogue example bank JSONL.")
     parser.add_argument("--source-root", default="../MAICA_ds_basis")
-    parser.add_argument("--output", default="data/dialogue_examples_maica_cleaned.jsonl")
-    parser.add_argument("--sources", nargs="*", default=DEFAULT_SOURCES)
+    parser.add_argument("--output", default="")
+    parser.add_argument("--sources", nargs="*")
+    parser.add_argument("--language", choices=("en", "zh", "both"), default="zh")
     args = parser.parse_args()
-    result = clean_maica_dataset(args.source_root, args.output, args.sources)
+    if args.language == "both":
+        results = []
+        for language, output in (("zh", "data/dialogue_examples_zh.jsonl"), ("en", "data/dialogue_examples_en.jsonl")):
+            results.append(clean_maica_dataset(args.source_root, output, None, language))
+        print(json.dumps(results, ensure_ascii=False, indent=2))
+        return 0
+    output = args.output or ("data/dialogue_examples_en.jsonl" if args.language == "en" else "data/dialogue_examples_zh.jsonl")
+    result = clean_maica_dataset(args.source_root, output, args.sources, args.language)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

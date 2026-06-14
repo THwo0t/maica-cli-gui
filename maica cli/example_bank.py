@@ -9,7 +9,8 @@ from typing import Any
 
 from embedding_index import search_vector_examples
 from embedding_service_client import search_service_examples
-from text_utils import contains_cjk, cjk_ratio, split_query_tokens
+from language_runtime import target_language
+from text_utils import contains_cjk, cjk_ratio, redact_secret, split_query_tokens
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -358,8 +359,20 @@ def score_example(example: dict[str, Any], user_input: str, response_plan: dict[
     return round(score, 3), debug
 
 
+def _paths_for_language(config: dict[str, Any], key: str, fallback_key: str, language: str) -> list[Any]:
+    mapped = config.get(key)
+    if isinstance(mapped, dict):
+        values = mapped.get(target_language(language))
+        if values is not None:
+            return _as_list(values)
+    return _as_list(config.get(fallback_key))
+
+
 def _example_paths(config: dict[str, Any]) -> list[Any]:
-    return [*_as_list(config.get('example_bank_core_paths')), *_as_list(config.get('example_bank_paths'))]
+    language = target_language(config)
+    core = _paths_for_language(config, 'example_bank_core_paths_by_language', 'example_bank_core_paths', language)
+    extra = _paths_for_language(config, 'example_bank_paths_by_language', 'example_bank_paths', language)
+    return [*core, *extra]
 
 
 def _vector_candidates(query_text: str, config: dict[str, Any], limit: int, min_score: float) -> tuple[list[dict[str, Any]], str, str]:
@@ -367,12 +380,12 @@ def _vector_candidates(query_text: str, config: dict[str, Any], limit: int, min_
         try:
             return search_service_examples(query_text, config, limit, min_score), 'service', ''
         except Exception as exc:
-            return [], 'service', str(exc)
+            return [], 'service', redact_secret(str(exc), config.get('api_key', ''))
     if config.get('embedding_enabled', False):
         try:
             return search_vector_examples(query_text, config, limit, min_score), 'vector', ''
         except Exception as exc:
-            return [], 'vector', str(exc)
+            return [], 'vector', redact_secret(str(exc), config.get('api_key', ''))
     return [], 'lexical', ''
 
 
@@ -398,7 +411,8 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
         candidates = load_dialogue_examples(_example_paths(config))
         retrieval_mode = 'lexical' if retrieval_mode != 'service' else 'service_fallback_lexical'
 
-    target_language = str(config.get('language') or 'en').lower()
+    selected_language = target_language(config)
+    language_filtered_count = 0
     scored: list[tuple[float, dict[str, Any], dict[str, Any]]] = []
     for item in candidates:
         if not isinstance(item, dict):
@@ -407,7 +421,12 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
         assistant = str(item.get('assistant') or '').strip()
         if not user or not assistant:
             continue
-        if not _example_matches_target_language(user, assistant, target_language):
+        item_language = str(item.get('language') or '').lower()
+        if item_language and target_language(item_language) != selected_language:
+            language_filtered_count += 1
+            continue
+        if not _example_matches_target_language(user, assistant, selected_language):
+            language_filtered_count += 1
             continue
         if _safe_int(item.get('quality'), 0) < min_quality:
             continue
@@ -456,6 +475,9 @@ def select_examples(user_input: str, response_plan: dict[str, Any], store: Any, 
         'vector_error': vector_error,
         'selected_intents': [item.get('example_intent') or item.get('intent') for item in selected],
         'selected_scores': [item.get('score') for item in selected],
+        'target_language': selected_language,
+        'source_paths': [str(resolve_app_path(path)) for path in _example_paths(config)],
+        'language_filtered_count': language_filtered_count,
     }
     return selected
 

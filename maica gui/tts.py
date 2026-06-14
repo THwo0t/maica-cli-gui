@@ -46,8 +46,10 @@ def redact_secret(text: str, *secrets: str) -> str:
         secret = str(secret or '').strip()
         if secret and len(secret) >= 6:
             out = out.replace(secret, '***')
+    out = re.sub(r'(?i)(authorization\s*:\s*bearer\s+)\S+', r'\1***', out)
     out = re.sub(r'(?i)(bearer)\s+\S+', r'\1 ***', out)
     out = re.sub(r'(?i)(sk-)[A-Za-z0-9._\-]{6,}', r'\1***', out)
+    out = re.sub(r'(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password)\s*[=:]\s*)[A-Za-z0-9._\-]{6,}', r'\1***', out)
     return out
 
 
@@ -110,7 +112,7 @@ class WindowsSapiTTS:
             thread = threading.Thread(target=self._speak_blocking, args=(clean_text,), daemon=True)
             thread.start()
         except Exception as exc:
-            self.last_error = str(exc)
+            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
             return
 
     def stop(self) -> None:
@@ -174,7 +176,7 @@ class WindowsSapiTTS:
                     pass
             process.wait()
         except Exception as exc:
-            self.last_error = str(exc)
+            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
             return
         finally:
             with self.lock:
@@ -226,7 +228,7 @@ class SubprocessAudioPlayer:
                 creationflags=creation_flags,
             )
         except Exception as exc:
-            self.last_error = str(exc)
+            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
             return
         with self.lock:
             self.process = process
@@ -574,7 +576,7 @@ class SystemSayTTS:
             thread = threading.Thread(target=self._speak_blocking, args=(command,), daemon=True)
             thread.start()
         except Exception as exc:
-            self.last_error = str(exc)
+            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
 
     def stop(self) -> None:
         with self.lock:
@@ -604,7 +606,7 @@ class SystemSayTTS:
             if still_current and process.returncode not in (0, None):
                 self.last_error = f'system TTS failed: {(stderr or "").strip() or process.returncode}'
         except Exception as exc:
-            self.last_error = str(exc)
+            self.last_error = redact_secret(str(exc), self.config.get('tts_bailian_api_key'), self.config.get('stt_bailian_api_key'))
         finally:
             with self.lock:
                 if self.process is process:

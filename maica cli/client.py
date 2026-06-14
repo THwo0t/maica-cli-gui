@@ -9,6 +9,8 @@ import urllib.error
 import urllib.request
 from typing import Any, Iterator
 
+from text_utils import redact_secret
+
 
 class OpenAICompatibleClient:
     def __init__(self, config: dict[str, Any]):
@@ -57,7 +59,8 @@ class OpenAICompatibleClient:
                 raw = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")
-            raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
+            api_key = os.environ.get("MAICA_CLI_API_KEY") or str(self.config.get("api_key") or "")
+            raise RuntimeError(f"HTTP {exc.code}: {redact_secret(detail, api_key)}") from exc
 
         payload = json.loads(raw)
         return {
@@ -101,4 +104,5 @@ class OpenAICompatibleClient:
                         yield str(content)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")
-            raise RuntimeError(f"HTTP {exc.code}: {detail}") from exc
+            api_key = os.environ.get("MAICA_CLI_API_KEY") or str(self.config.get("api_key") or "")
+            raise RuntimeError(f"HTTP {exc.code}: {redact_secret(detail, api_key)}") from exc

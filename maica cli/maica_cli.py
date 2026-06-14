@@ -388,7 +388,7 @@ def handle_command(
     try:
         parts = shlex.split(command)
     except ValueError as exc:
-        print(f"[command] {exc}")
+        print(f"[command] {redact_secret(str(exc), config.get('api_key', ''))}")
         return True
     if not parts:
         return True
@@ -513,7 +513,7 @@ def handle_command(
             try:
                 result = import_default_style_sources(config, source_root=source_root)
             except Exception as exc:
-                print(f"[dataset] import failed: {exc}")
+                print(f"[dataset] import failed: {redact_secret(str(exc), config.get('api_key', ''))}")
                 return True
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return True
@@ -522,7 +522,7 @@ def handle_command(
             try:
                 result = export_dialogue_dataset(config.get("jsonl_logs_path", "logs"), output_dir)
             except Exception as exc:
-                print(f"[dataset] export failed: {exc}")
+                print(f"[dataset] export failed: {redact_secret(str(exc), config.get('api_key', ''))}")
                 return True
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return True
@@ -533,7 +533,7 @@ def handle_command(
             finally:
                 db.close()
         except Exception as exc:
-            print(f"[dataset] stats failed: {exc}")
+            print(f"[dataset] stats failed: {redact_secret(str(exc), config.get('api_key', ''))}")
         return True
     if name == "/style":
         if len(parts) == 1:
@@ -594,7 +594,7 @@ def handle_command(
             try:
                 result = build_vector_index(config)
             except Exception as exc:
-                print(f"[vector] build failed: {exc}")
+                print(f"[vector] build failed: {redact_secret(str(exc), config.get('api_key', ''))}")
                 return True
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return True
@@ -616,7 +616,7 @@ def handle_command(
                     min_score=float(config.get("embedding_min_score", 0.55)),
                 )
             except Exception as exc:
-                print(f"[vector] search failed: {exc}")
+                print(f"[vector] search failed: {redact_secret(str(exc), config.get('api_key', ''))}")
                 return True
             if not rows:
                 print("[vector] no examples found. Try /vector build or lower embedding_min_score.")
@@ -640,7 +640,7 @@ def handle_command(
             try:
                 report = build_vector_debug_report(store, config, query)
             except Exception as exc:
-                print(f"[vector] debug failed: {exc}")
+                print(f"[vector] debug failed: {redact_secret(str(exc), config.get('api_key', ''))}")
                 return True
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return True
@@ -811,7 +811,7 @@ def handle_command(
                 try:
                     result = build_memory_vector_index(store, config)
                 except Exception as exc:
-                    print(f"[memory] vector build failed: {exc}")
+                    print(f"[memory] vector build failed: {redact_secret(str(exc), config.get('api_key', ''))}")
                     return True
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return True
@@ -833,7 +833,7 @@ def handle_command(
                         min_score=float(config.get("memory_embedding_min_score", 0.55)),
                     )
                 except Exception as exc:
-                    print(f"[memory] vector search failed: {exc}")
+                    print(f"[memory] vector search failed: {redact_secret(str(exc), config.get('api_key', ''))}")
                     return True
                 if not rows:
                     print("[memory] no vector memories found. Try /memory vector build or lower memory_embedding_min_score.")
@@ -935,7 +935,7 @@ def handle_command(
 def repl(config: dict[str, Any], store: Store) -> None:
     engine = MaicaEngine(config=config, store=store, app_dir=APP_DIR)
     client = engine.client
-    print("MAICA CLI Debugger v0.11.8")
+    print("MAICA CLI Debugger v0.11.9")
     print("Type /help for debug commands, /exit to quit. Use maica gui/gui_app.py for the GUI.")
     print()
 
@@ -958,7 +958,7 @@ def repl(config: dict[str, Any], store: Store) -> None:
                 print("bye.")
                 return
             except Exception as exc:
-                print(f"[command error] {exc}")
+                print(f"[command error] {redact_secret(str(exc), config.get('api_key', ''))}")
             continue
 
         result = engine.chat(user_input)

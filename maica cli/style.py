@@ -190,14 +190,21 @@ class StyleStore:
         self.conn.commit()
         return counts
 
-    def search(self, query: str, category: str = '', limit: int = 3) -> list[sqlite3.Row]:
+    def search(self, query: str, category: str = '', limit: int = 3, language: str = '') -> list[sqlite3.Row]:
         query_norm = str(query or '').strip().lower()
         wanted_category = category or categorize_user_input(query)
         tokens = split_query_tokens(query_norm)
-        rows = self.conn.execute(
-            'SELECT * FROM style_examples WHERE category = ? ORDER BY id DESC LIMIT 300',
-            (wanted_category,),
-        ).fetchall()
+        language = 'zh' if str(language or '').lower().startswith('zh') else 'en' if language else ''
+        if language:
+            rows = self.conn.execute(
+                'SELECT * FROM style_examples WHERE category = ? AND language = ? ORDER BY id DESC LIMIT 300',
+                (wanted_category, language),
+            ).fetchall()
+        else:
+            rows = self.conn.execute(
+                'SELECT * FROM style_examples WHERE category = ? ORDER BY id DESC LIMIT 300',
+                (wanted_category,),
+            ).fetchall()
         scored = []
         for row in rows:
             user_text = str(row['user_text'] or '').lower()
@@ -284,7 +291,7 @@ def build_style_context(config: dict[str, Any], user_input: str) -> tuple[str, d
         ]
     try:
         db = StyleStore(style_db_path(config))
-        examples = db.search(user_input, category, int(config.get('style_example_limit', 3)))
+        examples = db.search(user_input, category, int(config.get('style_example_limit', 3)), 'en' if english else 'zh')
         db.close()
     except Exception:
         examples = []
