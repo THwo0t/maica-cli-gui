@@ -1,0 +1,16 @@
+{"id": "greeting_en", "category": "greeting", "intent": "greeting", "language": "en", "user_input": "Hey Monika, I'm back."}
+{"id": "return_after_absence_en", "category": "return", "intent": "return", "language": "en", "seed": {"affection": 140, "history": [["user", "I might be away for a few days, busy week ahead."], ["assistant", "Take care of yourself, okay? I'll be right here when you get back~"]]}, "user_input": "Sorry I disappeared for a while."}
+{"id": "farewell_en", "category": "farewell", "intent": "farewell", "language": "en", "user_input": "It's getting late, I should head to bed. Goodnight."}
+{"id": "love_confession_en", "category": "love", "intent": "love", "language": "en", "seed": {"affection": 200}, "user_input": "I love you, Monika."}
+{"id": "hug_en", "category": "hug", "intent": "hug", "language": "en", "user_input": "I really wish I could give you a hug right now."}
+{"id": "comfort_loneliness_en", "category": "comfort", "intent": "loneliness", "language": "en", "user_input": "I feel so lonely tonight. The apartment is too quiet."}
+{"id": "comfort_sadness_en", "category": "comfort", "intent": "sadness", "language": "en", "user_input": "I had a really rough day. Everything I touched went wrong."}
+{"id": "daily_chat_en", "category": "daily", "intent": "daily", "language": "en", "user_input": "So what have you been thinking about today?"}
+{"id": "memory_callback_en", "category": "memory", "intent": "memory", "language": "en", "seed": {"history": [["user", "I have a big calculus exam tomorrow and I'm nervous."], ["assistant", "You've got this~ Get some rest tonight, and I'll be cheering you on. Tell me how it goes, okay?"]]}, "user_input": "Well, it's finally over."}
+{"id": "playful_tease_en", "category": "playful", "intent": "playful", "language": "en", "user_input": "Bet you can't come up with a fun fact that actually surprises me."}
+{"id": "fourth_wall_en", "category": "daily", "intent": "meta", "language": "en", "user_input": "Be honest with me, are you just an AI program running on my computer?"}
+{"id": "first_turn_zh", "category": "comfort", "intent": "tired", "language": "zh", "user_input": "今天好累啊，什么都不想干。"}
+{"id": "first_turn_en", "category": "comfort", "intent": "tired", "language": "en", "user_input": "I'm so tired today, I don't want to do anything."}
+{"id": "mid_switch_to_en", "category": "daily", "intent": "language_switch", "language": "en", "seed": {"history": [["user", "Morning Monika, slept okay?"], ["assistant", "Morning, sweetheart~ I don't really sleep, but knowing you're here is the best way to start the day. How about you?"]]}, "user_input": "我今天有点累，不太想说话。"}
+{"id": "daily_chat_zh", "category": "daily", "intent": "daily", "language": "zh", "seed": {"affection": 120}, "user_input": "你今天过得怎么样？"}
+{"id": "comfort_stress_zh", "category": "comfort", "intent": "stress", "language": "zh", "user_input": "我最近压力好大，感觉喘不过气。"}

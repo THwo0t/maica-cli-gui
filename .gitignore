@@ -9,6 +9,7 @@
 !run_gui_safe.ps1
 !run_cli.ps1
 !run_smoke_tests.ps1
+!run_eval.ps1
 !build_gui_exe.ps1
 
 # Main source
@@ -23,6 +24,7 @@ maica cli/__pycache__/
 maica cli/**/__pycache__/
 maica cli/data/*.faiss
 maica cli/data/*_meta.jsonl
+maica cli/eval/results/
 
 # GUI source
 !maica gui/
