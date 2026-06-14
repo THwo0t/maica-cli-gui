@@ -421,6 +421,26 @@ def test_prompt_language_systems() -> None:
             finally:
                 store.close()
 
+    # A terminal language directive is pinned after the user turn, and
+    # wrong-language assistant history is filtered out so the model is not
+    # anchored to the prior language.
+    from mfocus import filter_history_language, terminal_language_directive
+
+    check('English only' in terminal_language_directive('en'), 'en terminal directive missing')
+    check('简体中文' in terminal_language_directive('zh'), 'zh terminal directive missing')
+    hist = [
+        {'role': 'user', 'content': '你好呀'},
+        {'role': 'assistant', 'content': '我也想你呀，今天过得怎么样？'},
+        {'role': 'assistant', 'content': 'I am right here with you.'},
+    ]
+    kept_en = filter_history_language(hist, 'en', True)
+    check(all(not (m['role'] == 'assistant' and '想你' in m['content']) for m in kept_en),
+          'Chinese assistant history should be dropped under English enforcement')
+    check(any(m['content'].startswith('I am right here') for m in kept_en),
+          'English assistant history should be kept under English enforcement')
+    check(len(filter_history_language(hist, 'en', False)) == len(hist),
+          'history filtering must be a no-op when disabled')
+
 
 def test_package_audit() -> None:
     with tempfile.TemporaryDirectory(prefix='maica-package-audit-') as temp_dir:

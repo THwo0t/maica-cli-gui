@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.7.
+"""MAICA GUI v0.11.8.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -49,7 +49,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.7'
+APP_VERSION = '0.11.8'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -663,6 +663,21 @@ class ChatLog(QScrollArea):
         self._column.addStretch(1)
         self.setWidget(self._container)
         self._bubbles: list[MessageBubble] = []
+        # Messenger-style "stick to bottom": when content grows (new bubble or a
+        # bulk history load), jump to the newest message unless the user has
+        # scrolled up. This also fixes history loading starting at the top.
+        self._stick_bottom = True
+        bar = self.verticalScrollBar()
+        bar.rangeChanged.connect(self._on_range_changed)
+        bar.valueChanged.connect(self._on_value_changed)
+
+    def _on_value_changed(self, value: int) -> None:
+        bar = self.verticalScrollBar()
+        self._stick_bottom = value >= bar.maximum() - 4
+
+    def _on_range_changed(self, _min: int, _max: int) -> None:
+        if self._stick_bottom:
+            self.verticalScrollBar().setValue(self.verticalScrollBar().maximum())
 
     def _add(self, bubble: MessageBubble, align: str) -> None:
         row = QHBoxLayout()
@@ -683,7 +698,8 @@ class ChatLog(QScrollArea):
         self._column.insertWidget(self._column.count() - 1, holder)
         self._bubbles.append(bubble)
         self._apply_width(bubble)
-        QTimer.singleShot(0, self._scroll_to_bottom)
+        # Scrolling to the newest bubble is handled by the stick-to-bottom
+        # range handler once the layout settles.
 
     def _apply_width(self, bubble: MessageBubble) -> None:
         viewport_width = max(280, self.viewport().width())

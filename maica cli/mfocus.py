@@ -15,6 +15,7 @@ from response_planner import build_response_plan, format_response_plan_context
 from sfe import build_sfe_facts
 from store import Store
 from style import build_style_context
+from text_utils import cjk_ratio
 
 
 DEFAULT_SPECIAL_EVENTS = [
@@ -319,6 +320,54 @@ def _final_language_reminder(language: str, source: str = 'user') -> str:
     return f'最后提醒：必须遵守上面的回复语言设置；如果{subject}不同，也不要跟随它切换语言。'
 
 
+def _history_language_mismatch(content: str, language: str) -> bool:
+    text = str(content or '').strip()
+    if not text:
+        return False
+    if str(language or '').lower().startswith('en'):
+        return cjk_ratio(text) >= 0.2
+    letters = sum(1 for char in text if char.isascii() and char.isalpha())
+    return cjk_ratio(text) < 0.08 and letters >= 6
+
+
+def filter_history_language(messages: list[dict[str, str]], language: str, enabled: bool) -> list[dict[str, str]]:
+    """Drop assistant turns written in the wrong language.
+
+    Models anchor strongly to the language of prior assistant turns, so feeding
+    Chinese history makes them keep replying in Chinese even with an English
+    directive. Removing the mismatched anchor is deterministic — it does not
+    rely on the model choosing to obey — and lets the language directives win,
+    including for a mid-conversation language switch.
+    """
+    if not enabled:
+        return messages
+    kept: list[dict[str, str]] = []
+    for message in messages:
+        if message.get('role') == 'assistant' and _history_language_mismatch(message.get('content', ''), language):
+            continue
+        kept.append(message)
+    return kept
+
+
+def terminal_language_directive(language: str) -> str:
+    """A hard language lock placed AFTER history + user turn.
+
+    This is the most salient position (closest to generation), so the model
+    obeys it over the conversation history's language — making turn one and
+    mid-conversation language switches deterministic instead of relying on the
+    model inferring the language from context.
+    """
+    if str(language or '').lower().startswith('en'):
+        return (
+            'Reply in English only. Your entire reply must be natural English, '
+            'no matter what language was used earlier in this conversation or by the user just now.'
+        )
+    return (
+        '只用简体中文回复。无论本次对话之前或用户刚才用的是什么语言，'
+        '你的整段回复都必须是自然的简体中文（必要的人名、缩写、术语除外）。'
+    )
+
+
 def build_messages(store: Store, config: dict[str, Any], user_input: str, client: Any | None = None) -> tuple[list[dict[str, str]], dict[str, Any]]:
     profile = store.get_profile()
     player_name = profile.get('player_name') or 'player'
@@ -350,8 +399,11 @@ def build_messages(store: Store, config: dict[str, Any], user_input: str, client
             ),
         }
     ]
-    messages.extend(store.recent_messages(int(config.get('history_messages', 16))))
+    history = store.recent_messages(int(config.get('history_messages', 16)))
+    history = filter_history_language(history, language, bool(config.get('language_enforce_rewrite', True)))
+    messages.extend(history)
     messages.append({'role': 'user', 'content': user_input})
+    messages.append({'role': 'system', 'content': terminal_language_directive(language)})
     return messages, plan
 
 
@@ -433,6 +485,7 @@ def build_spire_messages(
             ),
         },
         {'role': 'user', 'content': prompt},
+        {'role': 'system', 'content': terminal_language_directive(language)},
     ]
     return messages, plan
 

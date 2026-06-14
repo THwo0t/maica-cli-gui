@@ -132,6 +132,20 @@ def _reply_language_mismatch(text: str, language: str) -> bool:
     return cjk < 0.08 and letters >= 6
 
 
+def _more_conformant_to_language(original: str, candidate: str, language: str) -> str:
+    """Return whichever text conforms better to the target language.
+
+    For English, lower CJK ratio is better; for Chinese, higher. Used so a
+    language rewrite is never discarded in favour of a more-wrong original.
+    """
+    english = str(language or '').lower().startswith('en')
+    original_cjk = cjk_ratio(original)
+    candidate_cjk = cjk_ratio(candidate)
+    if english:
+        return candidate if candidate_cjk < original_cjk else original
+    return candidate if candidate_cjk > original_cjk else original
+
+
 class MaicaEngine:
     """Single runtime entrypoint shared by CLI and future GUI."""
 
@@ -519,9 +533,13 @@ class MaicaEngine:
             )
             parsed = parse_assistant_response(rewritten)
             text = str(parsed.get("text") or rewritten).strip()
-            if text and not _reply_language_mismatch(text, language):
-                info["rewritten"] = True
-                return text, info
+            if text:
+                # Never fall back to the original when the rewrite is closer to
+                # the target language: pick whichever conforms better, so a
+                # partial rewrite still beats keeping the wrong-language original.
+                best = _more_conformant_to_language(reply, text, language)
+                info["rewritten"] = best != reply
+                return best, info
         except Exception as exc:
             info["error"] = str(exc)
         return reply, info
