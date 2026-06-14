@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.3.
+"""MAICA GUI v0.11.4.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QTextCursor
+from PySide6.QtGui import QColor, QFont, QLinearGradient, QPainter, QPixmap, QRadialGradient, QTextCursor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFormLayout,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -49,7 +50,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.3'
+APP_VERSION = '0.11.4'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -581,7 +582,15 @@ class BackgroundWidget(QWidget):
             x = (self.width() - scaled.width()) // 2
             y = (self.height() - scaled.height()) // 2
             painter.drawPixmap(x, y, scaled)
-        painter.fillRect(self.rect(), QColor(15, 18, 22, 84))
+        # Soft vignette: faint warm glow at center, darkened toward the edges,
+        # so panels and the avatar read with more depth than a flat overlay.
+        rect = self.rect()
+        radius = max(rect.width(), rect.height()) * 0.75
+        vignette = QRadialGradient(rect.center(), radius)
+        vignette.setColorAt(0.0, QColor(*VIGNETTE_CENTER))
+        vignette.setColorAt(0.55, QColor(34, 22, 32, 90))
+        vignette.setColorAt(1.0, QColor(*VIGNETTE_EDGE))
+        painter.fillRect(rect, vignette)
         painter.end()
         super().paintEvent(event)
 
@@ -635,6 +644,11 @@ class MainWindow(QMainWindow):
         self.startup_greeting_shown = False
         self.idle_timer.setInterval(30_000)
         self.idle_timer.timeout.connect(self.check_idle_spire)
+        self.current_emotion = 'smile'
+        self.typing_phase = 0
+        self.typing_timer = QTimer(self)
+        self.typing_timer.setInterval(420)
+        self.typing_timer.timeout.connect(self._tick_typing)
 
         suffix = ' · SAFE TEST DB' if self.safe_test_mode else ''
         self.setWindowTitle(f'MAICA GUI v{APP_VERSION}{suffix}')
@@ -694,6 +708,11 @@ class MainWindow(QMainWindow):
         self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.avatar_label.setMinimumWidth(440)
         self.avatar_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        avatar_shadow = QGraphicsDropShadowEffect(self)
+        avatar_shadow.setBlurRadius(48)
+        avatar_shadow.setOffset(0, 10)
+        avatar_shadow.setColor(QColor(*SHADOW_COLOR))
+        self.avatar_label.setGraphicsEffect(avatar_shadow)
         left_layout.addWidget(self.avatar_label, 1)
 
         self.status_label = QLabel('emotion: smile')
@@ -739,6 +758,14 @@ class MainWindow(QMainWindow):
         self.diagnostics_button = QPushButton('Diagnostics')
         self.debug_button = QPushButton('Debug')
         self.clear_button = QPushButton('Clear')
+        # Tier the buttons: accent primaries, tinted secondaries, quiet ghosts.
+        for button in (self.send_button, self.spire_button):
+            button.setProperty('btnRole', 'primary')
+        for button in (self.tts_button, self.stop_tts_button, self.listen_button):
+            button.setProperty('btnRole', 'secondary')
+        for button in (self.data_button, self.settings_button, self.diagnostics_button,
+                       self.debug_button, self.clear_button):
+            button.setProperty('btnRole', 'ghost')
         self.send_button.clicked.connect(self.send_chat)
         self.spire_button.clicked.connect(self.send_spire)
         self.tts_button.clicked.connect(self.toggle_tts)
@@ -772,7 +799,7 @@ class MainWindow(QMainWindow):
         right_layout.addWidget(self.debug_panel)
 
         main_layout.addWidget(right_panel, 4)
-        self.setStyleSheet(STYLE_SHEET)
+        self.setStyleSheet(_build_style_sheet(THEME))
 
     def eventFilter(self, watched: QObject, event: Any) -> bool:
         if watched is self.input_box and event.type() == QEvent.Type.KeyPress:
@@ -788,6 +815,7 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: Any) -> None:
         self.tts.stop()
         self.idle_timer.stop()
+        self.typing_timer.stop()
         self.shutdown_requested.emit()
         self.thread.quit()
         if not self.thread.wait(5000):
@@ -800,14 +828,18 @@ class MainWindow(QMainWindow):
         self.chat_view.append(f'<div class="system">{html_escape(text)}</div>')
 
     def add_user_message(self, text: str) -> None:
-        self.chat_view.append(f'<div class="user"><b>you</b><br>{html_escape(text)}</div>')
+        body = '<br>'.join(html_escape(line) for line in text.splitlines() if line.strip())
+        self.chat_view.append(f'<div class="user"><span class="who">You</span><br>{body}</div>')
 
     def add_monika_message(self, text: str, emotion: str, response_time: Any = '') -> None:
         lines = '<br>'.join(html_escape(line) for line in text.splitlines() if line.strip())
-        meta = f'[emotion: {html_escape(emotion or "neutral")}]'
+        meta = f'{html_escape(emotion or "neutral")}'
         if response_time != '':
-            meta += f' [time: {response_time}s]'
-        self.chat_view.append(f'<div class="monika"><b>monika</b><br>{lines}<br><span>{meta}</span></div>')
+            meta += f' · {response_time}s'
+        self.chat_view.append(
+            f'<div class="monika"><span class="who">Monika</span><br>{lines}'
+            f'<br><span class="meta">{meta}</span></div>'
+        )
 
     def _insert_chat_html(self, html: str) -> None:
         cursor = self.chat_view.textCursor()
@@ -819,7 +851,7 @@ class MainWindow(QMainWindow):
     def _handle_stream_started(self, payload: dict[str, Any]) -> None:
         self.streaming_active = True
         self.streaming_text = ''
-        self._insert_chat_html('<div class="monika"><b>monika</b><br>')
+        self._insert_chat_html('<div class="monika"><span class="who">Monika</span><br>')
 
     def _handle_stream_chunk(self, chunk: str) -> None:
         if not self.streaming_active:
@@ -831,10 +863,10 @@ class MainWindow(QMainWindow):
         self._insert_chat_html(html_escape(text).replace('\n', '<br>'))
 
     def _finish_streaming_message(self, emotion: str, response_time: Any = '') -> None:
-        meta = f'[emotion: {html_escape(emotion or "neutral")}]'
+        meta = f'{html_escape(emotion or "neutral")}'
         if response_time != '':
-            meta += f' [time: {response_time}s]'
-        self._insert_chat_html(f'<br><span>{meta}</span></div><br>')
+            meta += f' · {response_time}s'
+        self._insert_chat_html(f'<br><span class="meta">{meta}</span></div><br>')
         self.streaming_active = False
         self.streaming_text = ''
 
@@ -843,7 +875,15 @@ class MainWindow(QMainWindow):
         self.spire_button.setEnabled(not busy)
         self.input_box.setEnabled(not busy)
         if busy:
-            self.status_label.setText('thinking...')
+            self.typing_phase = 0
+            self._tick_typing()
+            self.typing_timer.start()
+        else:
+            self.typing_timer.stop()
+
+    def _tick_typing(self) -> None:
+        self.typing_phase = (self.typing_phase + 1) % 4
+        self.status_label.setText('Monika is typing' + '·' * self.typing_phase)
 
     def background_for_now(self) -> QPixmap:
         mode = str(self.current_config.get('gui_background_mode') or 'auto')
@@ -854,8 +894,9 @@ class MainWindow(QMainWindow):
 
     def set_emotion(self, emotion: str) -> None:
         normalized = normalize_emotion(emotion)
+        self.current_emotion = normalized
         self.status_label.setProperty('emotion', normalized)
-        self.status_label.setText(f'emotion: {normalized}')
+        self.status_label.setText(f'♥ {normalized}')
         avatar = self.assets.compose_avatar(normalized)
         if avatar.isNull():
             return
@@ -1181,103 +1222,213 @@ class MainWindow(QMainWindow):
             self.add_system_message(f'TTS error: {error}')
 
 
-STYLE_SHEET = """
-QMainWindow {
-    background: #111318;
+# --- Design tokens: rose-pink x soft-light theme ----------------------------
+# Centralized so re-skinning is a single-place edit.
+THEME = {
+    'bg': '#2a1d28',            # warm pink-night base
+    'bg_edge': '#1a1019',       # vignette edge
+    'panel': 'rgba(60, 44, 56, 0.58)',       # soft glass panel
+    'panel_border': 'rgba(255, 224, 232, 0.20)',
+    'accent': '#d98a9a',        # rose gold
+    'accent_hi': '#e8a8b4',     # hover
+    'accent_lo': '#c2727f',     # pressed
+    'on_accent': '#2c1620',     # dark ink on rose-gold
+    'cream': 'rgba(255, 247, 245, 0.97)',    # chat surface
+    'input_bg': 'rgba(255, 250, 249, 0.98)',
+    'ink': '#3c2b32',           # primary text on cream
+    'muted': '#9c838b',         # secondary text
+    'title': '#fbeef1',
+    'soft': '#f1dde3',          # light text on dark panels
+    'font_stack': '"Segoe UI", "PingFang SC", "Microsoft YaHei UI", "Noto Sans CJK SC", sans-serif',
+    'mono_stack': '"Cascadia Mono", "JetBrains Mono", Consolas, "Courier New", monospace',
 }
-QFrame#leftPanel, QFrame#rightPanel {
-    background: rgba(20, 24, 29, 172);
-    border: 1px solid rgba(255, 255, 255, 72);
-    border-radius: 18px;
-}
-QLabel#titleLabel {
-    color: #f6f0e8;
-    font-size: 28px;
+
+# Avatar drop-shadow / background vignette colors as QColor tuples.
+SHADOW_COLOR = (20, 10, 18, 150)
+VIGNETTE_CENTER = (255, 232, 240, 18)   # faint warm glow behind avatar
+VIGNETTE_EDGE = (16, 8, 14, 150)        # darkened edges
+
+
+def _build_style_sheet(t: dict[str, str]) -> str:
+    return f"""
+QMainWindow {{
+    background: {t['bg']};
+}}
+QWidget {{
+    font-family: {t['font_stack']};
+}}
+QFrame#leftPanel, QFrame#rightPanel {{
+    background: {t['panel']};
+    border: 1px solid {t['panel_border']};
+    border-radius: 20px;
+}}
+QLabel#titleLabel {{
+    color: {t['title']};
+    font-size: 26px;
     font-weight: 700;
     letter-spacing: 1px;
-}
-QLabel#statusLabel {
-    color: #e9dacd;
-    background: rgba(0, 0, 0, 88);
-    padding: 8px 12px;
-    border-radius: 10px;
-}
-QLabel#contextLabel {
-    color: #f2e4d7;
-    background: rgba(0, 0, 0, 74);
-    padding: 8px 12px;
-    border-radius: 10px;
-}
-QTextBrowser#chatView {
-    background: rgba(250, 246, 239, 224);
-    color: #2a2728;
-    border: none;
-    border-radius: 14px;
-    padding: 12px;
-    font-size: 15px;
-}
-QTextEdit#inputBox {
-    background: rgba(255, 252, 248, 238);
-    color: #292525;
-    border: 1px solid rgba(120, 82, 85, 120);
+}}
+QLabel#statusLabel {{
+    color: {t['on_accent']};
+    background: {t['accent']};
+    padding: 5px 14px;
     border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+}}
+QLabel#contextLabel {{
+    color: {t['soft']};
+    background: rgba(0, 0, 0, 0.30);
+    padding: 8px 14px;
+    border-radius: 12px;
+    font-size: 12px;
+}}
+QTextBrowser#chatView {{
+    background: {t['cream']};
+    color: {t['ink']};
+    border: none;
+    border-radius: 16px;
+    padding: 14px;
+    font-size: 15px;
+}}
+QTextEdit#inputBox {{
+    background: {t['input_bg']};
+    color: {t['ink']};
+    border: 1px solid rgba(217, 138, 154, 0.45);
+    border-radius: 14px;
     padding: 10px;
     font-size: 15px;
-}
-QPlainTextEdit#debugPanel {
-    background: rgba(22, 26, 31, 210);
-    color: #d8e8db;
-    border: 1px solid rgba(255, 255, 255, 54);
+    selection-background-color: {t['accent']};
+}}
+QTextEdit#inputBox:focus {{
+    border: 2px solid {t['accent']};
+}}
+QPlainTextEdit#debugPanel {{
+    background: rgba(26, 16, 25, 0.88);
+    color: {t['soft']};
+    border: 1px solid {t['panel_border']};
     border-radius: 12px;
     padding: 8px;
-    font-family: Consolas, "Courier New", monospace;
+    font-family: {t['mono_stack']};
     font-size: 12px;
-}
-QPushButton {
-    background: #8d4d5a;
-    color: #fff8f4;
+}}
+QPushButton {{
+    background: rgba(255, 255, 255, 0.10);
+    color: {t['soft']};
     border: none;
     border-radius: 12px;
-    padding: 8px 10px;
+    padding: 9px 14px;
     font-size: 14px;
-}
-QPushButton:hover {
-    background: #a65f6d;
-}
-QPushButton:disabled {
-    background: #6a6267;
-    color: #d1c5c1;
-}
+}}
+QPushButton:hover {{
+    background: rgba(255, 255, 255, 0.18);
+}}
+QPushButton:disabled {{
+    background: rgba(255, 255, 255, 0.06);
+    color: {t['muted']};
+}}
+QPushButton[btnRole="primary"] {{
+    background: {t['accent']};
+    color: {t['on_accent']};
+    font-weight: 600;
+}}
+QPushButton[btnRole="primary"]:hover {{
+    background: {t['accent_hi']};
+}}
+QPushButton[btnRole="primary"]:pressed {{
+    background: {t['accent_lo']};
+}}
+QPushButton[btnRole="primary"]:disabled {{
+    background: rgba(217, 138, 154, 0.35);
+    color: rgba(44, 22, 32, 0.55);
+}}
+QPushButton[btnRole="secondary"] {{
+    background: rgba(217, 138, 154, 0.16);
+    color: {t['soft']};
+    border: 1px solid rgba(217, 138, 154, 0.40);
+}}
+QPushButton[btnRole="secondary"]:hover {{
+    background: rgba(217, 138, 154, 0.30);
+}}
+QPushButton[btnRole="secondary"]:checked {{
+    background: {t['accent']};
+    color: {t['on_accent']};
+    font-weight: 600;
+}}
+QPushButton[btnRole="ghost"] {{
+    background: transparent;
+    color: {t['muted']};
+    padding: 7px 10px;
+    font-size: 13px;
+}}
+QPushButton[btnRole="ghost"]:hover {{
+    background: rgba(255, 255, 255, 0.10);
+    color: {t['soft']};
+}}
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 4px 2px 4px 0;
+}}
+QScrollBar::handle:vertical {{
+    background: rgba(217, 138, 154, 0.55);
+    border-radius: 5px;
+    min-height: 28px;
+}}
+QScrollBar::handle:vertical:hover {{
+    background: rgba(217, 138, 154, 0.80);
+}}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{
+    height: 0;
+}}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
+    background: transparent;
+}}
 """
 
+
+# Qt's QTextDocument supports only a CSS subset (no border-radius / gradients in
+# rich text), so chat bubbles rely on backgrounds, padding, margins, and a left
+# accent border rather than rounded gradients.
 CHAT_HTML_STYLE = """
 .system {
-    color: #5b6670;
-    margin: 8px 0;
+    color: #9c838b;
+    margin: 10px 40px;
     font-size: 12px;
+    text-align: center;
 }
 .user {
-    background: #eef4ff;
-    border-radius: 10px;
-    margin: 8px 0 8px 36px;
-    padding: 8px 10px;
+    background: #f3e7ef;
+    color: #3c2b32;
+    margin: 10px 30px 10px 70px;
+    padding: 9px 13px;
+}
+.user .who {
+    color: #9a7d92;
+    font-size: 11px;
+    font-weight: 600;
 }
 .monika {
-    background: #fff6f0;
-    border-radius: 10px;
-    margin: 8px 36px 8px 0;
-    padding: 8px 10px;
+    background: #fff3f4;
+    color: #3c2b32;
+    border-left: 3px solid #d98a9a;
+    margin: 10px 70px 10px 30px;
+    padding: 9px 13px;
 }
-.monika span {
-    color: #8f7a70;
+.monika .who {
+    color: #c2727f;
+    font-size: 11px;
+    font-weight: 600;
+}
+.monika .meta {
+    color: #b79aa1;
     font-size: 11px;
 }
 .notice {
-    color: #7a5c2d;
-    background: #fff5d8;
-    border-radius: 8px;
-    margin: 6px 0;
-    padding: 5px 8px;
+    color: #8a5d6a;
+    background: #fbe9ec;
+    margin: 7px 30px;
+    padding: 6px 10px;
     font-size: 12px;
 }
 """
