@@ -16,19 +16,42 @@ def read_json(path: Path) -> dict[str, Any]:
         return json.load(handle)
 
 
+EXPRESSIONS = (
+    'neutral', 'smile', 'happy', 'gentle', 'shy',
+    'playful', 'thinking', 'concerned', 'sad', 'surprised',
+)
+
+# Aliases collapse only synonyms; the ten distinct expressions above are kept
+# so the engine's full emotion range maps to distinct faces.
+EMOTION_ALIASES = {
+    'blush': 'shy',
+    'embarrassed': 'shy',
+    'deep_affection': 'shy',
+    'worried': 'concerned',
+    'anxious': 'concerned',
+    'attentive': 'concerned',
+    'soft': 'gentle',
+    'calm': 'gentle',
+    'tender': 'gentle',
+    'smug': 'playful',
+    'teasing': 'playful',
+    'grin': 'happy',
+    'joy': 'happy',
+    'excited': 'happy',
+    'focused': 'thinking',
+    'curious': 'thinking',
+    'curious_warm': 'thinking',
+    'sorrow': 'sad',
+    'upset': 'sad',
+    'shock': 'surprised',
+    'surprise': 'surprised',
+}
+
+
 def normalize_emotion(emotion: str) -> str:
     value = (emotion or '').lower().strip()
-    if value in {'shy', 'blush', 'embarrassed', 'deep_affection'}:
-        return 'shy'
-    if value in {'concerned', 'sad', 'worried', 'attentive'}:
-        return 'concerned'
-    if value in {'playful', 'happy', 'smug', 'teasing'}:
-        return 'playful'
-    if value in {'thinking', 'focused', 'curious', 'curious_warm'}:
-        return 'thinking'
-    if value in {'smile', 'soft', 'calm', 'gentle'}:
-        return 'smile'
-    return 'neutral'
+    value = EMOTION_ALIASES.get(value, value)
+    return value if value in EXPRESSIONS else 'neutral'
 
 
 class AssetManager:

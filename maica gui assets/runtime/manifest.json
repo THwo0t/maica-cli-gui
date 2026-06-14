@@ -24,41 +24,66 @@
     ],
     "expressions": {
       "neutral": [
-        "monika/face/neutral-eyes.png",
-        "monika/face/neutral-eyebrows.png",
-        "monika/face/neutral-mouth.png",
-        "monika/face/neutral-nose.png"
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-small.png",
+        "monika/face/face-eyes-normal.png",
+        "monika/face/face-eyebrows-mid.png"
       ],
       "smile": [
-        "monika/face/smile-eyes.png",
-        "monika/face/smile-eyebrows.png",
-        "monika/face/smile-mouth.png",
-        "monika/face/smile-nose.png"
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-smile.png",
+        "monika/face/face-eyes-normal.png",
+        "monika/face/face-eyebrows-up.png"
+      ],
+      "happy": [
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-big.png",
+        "monika/face/face-eyes-closedhappy.png",
+        "monika/face/face-eyebrows-up.png"
+      ],
+      "gentle": [
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-smile.png",
+        "monika/face/face-eyes-soft.png",
+        "monika/face/face-eyebrows-mid.png"
       ],
       "shy": [
-        "monika/face/shy-eyes.png",
-        "monika/face/shy-eyebrows.png",
-        "monika/face/shy-mouth.png",
-        "monika/face/shy-blush.png",
-        "monika/face/shy-nose.png"
-      ],
-      "concerned": [
-        "monika/face/concerned-eyes.png",
-        "monika/face/concerned-eyebrows.png",
-        "monika/face/concerned-mouth.png",
-        "monika/face/concerned-nose.png"
+        "monika/face/face-nose-def.png",
+        "monika/face/face-blush-full.png",
+        "monika/face/face-mouth-small.png",
+        "monika/face/face-eyes-soft.png",
+        "monika/face/face-eyebrows-knit.png"
       ],
       "playful": [
-        "monika/face/playful-eyes.png",
-        "monika/face/playful-eyebrows.png",
-        "monika/face/playful-mouth.png",
-        "monika/face/playful-nose.png"
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-smirk.png",
+        "monika/face/face-eyes-smug.png",
+        "monika/face/face-eyebrows-up.png"
       ],
       "thinking": [
-        "monika/face/thinking-eyes.png",
-        "monika/face/thinking-eyebrows.png",
-        "monika/face/thinking-mouth.png",
-        "monika/face/thinking-nose.png"
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-small.png",
+        "monika/face/face-eyes-left.png",
+        "monika/face/face-eyebrows-think.png"
+      ],
+      "concerned": [
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-small.png",
+        "monika/face/face-eyes-normal.png",
+        "monika/face/face-eyebrows-knit.png",
+        "monika/face/face-sweatdrop-def.png"
+      ],
+      "sad": [
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-pout.png",
+        "monika/face/face-eyes-closedsad.png",
+        "monika/face/face-eyebrows-knit.png"
+      ],
+      "surprised": [
+        "monika/face/face-nose-def.png",
+        "monika/face/face-mouth-gasp.png",
+        "monika/face/face-eyes-wide.png",
+        "monika/face/face-eyebrows-up.png"
       ]
     },
     "monika_front_layers": [
