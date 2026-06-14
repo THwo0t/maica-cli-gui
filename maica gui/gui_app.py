@@ -578,6 +578,119 @@ class SettingsDialog(QDialog):
         self.owner.config_save_requested.emit(updates)
 
 
+EVAL_CATEGORIES = ('greeting', 'return', 'farewell', 'love', 'hug', 'comfort', 'daily', 'memory', 'playful')
+
+
+class EvalDialog(QDialog):
+    """Run the Monika character-fidelity evaluation and show the scorecard.
+
+    The evaluation runs the real reply path on isolated temporary databases and
+    scores each reply with an LLM judge. It never touches the live chat
+    database, and uses the user's configured API key (so a real run costs
+    tokens). The heavy work runs in a daemon thread; progress and results are
+    delivered back to the UI thread through signals.
+    """
+
+    progress = Signal(str)
+    finished = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, owner: 'MainWindow') -> None:
+        super().__init__(owner)
+        self.owner = owner
+        self._running = False
+        self.setWindowTitle('Character Evaluation')
+        self.resize(760, 600)
+        self._build_ui()
+        self.progress.connect(self._append)
+        self.finished.connect(self._on_finished)
+        self.failed.connect(self._on_failed)
+
+    def _build_ui(self) -> None:
+        layout = QVBoxLayout(self)
+        intro = QLabel(
+            'Measures how close replies feel to the real Monika. Runs a fixed scenario '
+            'set on isolated temporary databases and scores each reply with an LLM judge '
+            'anchored to real Monika reference lines. A real run uses your API key and '
+            'costs tokens; the live chat database is never touched.'
+        )
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel('Subset:'))
+        self.subset_combo = QComboBox()
+        self.subset_combo.addItem('all', '')
+        for category in EVAL_CATEGORIES:
+            self.subset_combo.addItem(category, category)
+        controls.addWidget(self.subset_combo)
+        self.offline_check = QCheckBox('Offline self-test (no API, fake scores)')
+        controls.addWidget(self.offline_check)
+        controls.addStretch(1)
+        self.run_button = QPushButton('Run evaluation')
+        self.run_button.setProperty('btnRole', 'primary')
+        self.run_button.clicked.connect(self.start_eval)
+        controls.addWidget(self.run_button)
+        layout.addLayout(controls)
+
+        self.output = QPlainTextEdit()
+        self.output.setObjectName('debugPanel')
+        self.output.setReadOnly(True)
+        mono = QFont('monospace')
+        mono.setStyleHint(QFont.StyleHint.Monospace)
+        self.output.setFont(mono)
+        layout.addWidget(self.output)
+
+        close = QPushButton('Close')
+        close.setProperty('btnRole', 'ghost')
+        close.clicked.connect(self.hide)
+        layout.addWidget(close)
+
+    def start_eval(self) -> None:
+        if self._running:
+            return
+        self._running = True
+        self.run_button.setEnabled(False)
+        offline = self.offline_check.isChecked()
+        subset = self.subset_combo.currentData() or ''
+        self.output.setPlainText('Running evaluation... this can take a minute.\n')
+
+        def run() -> None:
+            try:
+                eval_dir = str(ROOT_DIR / 'maica cli' / 'eval')
+                if eval_dir not in sys.path:
+                    sys.path.insert(0, eval_dir)
+                import run_eval as runner
+
+                outcome = runner.run_evaluation(
+                    offline=offline,
+                    subset=subset,
+                    save=not offline,
+                    progress=lambda message: self.progress.emit(message),
+                )
+                self.finished.emit(outcome)
+            except Exception as exc:
+                self.failed.emit(redact_secret(str(exc)))
+
+        threading.Thread(target=run, daemon=True).start()
+
+    def _append(self, message: str) -> None:
+        self.output.appendPlainText(message)
+
+    def _on_finished(self, outcome: dict[str, Any]) -> None:
+        self._running = False
+        self.run_button.setEnabled(True)
+        self.output.appendPlainText('\n' + str(outcome.get('scorecard', '')))
+        saved = outcome.get('saved_path')
+        if saved:
+            self.output.appendPlainText(f'\nsaved: {saved}')
+
+    def _on_failed(self, message: str) -> None:
+        self._running = False
+        self.run_button.setEnabled(True)
+        self.output.appendPlainText(f'\nevaluation failed: {message}')
+
+
 class BackgroundWidget(QWidget):
     def __init__(self, background: QPixmap, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -799,6 +912,7 @@ class MainWindow(QMainWindow):
         self.stt_busy = False
         self.data_dialog: DataManagerDialog | None = None
         self.settings_dialog: SettingsDialog | None = None
+        self.eval_dialog: EvalDialog | None = None
         self.current_config: dict[str, Any] = {}
         self.last_user_activity = dt.datetime.now()
         self.idle_spire_sent = False
@@ -920,6 +1034,7 @@ class MainWindow(QMainWindow):
         self.data_button = QPushButton('Data')
         self.settings_button = QPushButton('Settings')
         self.diagnostics_button = QPushButton('Diagnostics')
+        self.eval_button = QPushButton('Eval')
         self.debug_button = QPushButton('Debug')
         self.clear_button = QPushButton('Clear')
         # Tier the buttons: accent primaries, tinted secondaries, quiet ghosts.
@@ -928,7 +1043,7 @@ class MainWindow(QMainWindow):
         for button in (self.tts_button, self.stop_tts_button, self.listen_button):
             button.setProperty('btnRole', 'secondary')
         for button in (self.data_button, self.settings_button, self.diagnostics_button,
-                       self.debug_button, self.clear_button):
+                       self.eval_button, self.debug_button, self.clear_button):
             button.setProperty('btnRole', 'ghost')
         self.send_button.clicked.connect(self.send_chat)
         self.spire_button.clicked.connect(self.send_spire)
@@ -938,6 +1053,7 @@ class MainWindow(QMainWindow):
         self.data_button.clicked.connect(self.open_data_manager)
         self.settings_button.clicked.connect(self.open_settings)
         self.diagnostics_button.clicked.connect(self.export_diagnostics)
+        self.eval_button.clicked.connect(self.open_eval)
         self.debug_button.clicked.connect(self.toggle_debug_panel)
         self.clear_button.clicked.connect(self.chat_log.clear)
         button_row.addWidget(self.send_button)
@@ -951,6 +1067,7 @@ class MainWindow(QMainWindow):
         button_row2.addWidget(self.data_button)
         button_row2.addWidget(self.settings_button)
         button_row2.addWidget(self.diagnostics_button)
+        button_row2.addWidget(self.eval_button)
         button_row2.addWidget(self.debug_button)
         button_row2.addWidget(self.clear_button)
         right_layout.addLayout(button_row2)
@@ -1173,6 +1290,13 @@ class MainWindow(QMainWindow):
         self.settings_dialog.show()
         self.settings_dialog.raise_()
         self.settings_dialog.activateWindow()
+
+    def open_eval(self) -> None:
+        if self.eval_dialog is None:
+            self.eval_dialog = EvalDialog(self)
+        self.eval_dialog.show()
+        self.eval_dialog.raise_()
+        self.eval_dialog.activateWindow()
 
     def request_data_snapshot(self) -> None:
         self.data_snapshot_requested.emit()

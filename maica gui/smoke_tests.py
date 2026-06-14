@@ -687,6 +687,28 @@ def test_gui_safe_offscreen() -> None:
     check((GUI_DIR / '.safe_test' / 'maica_cli_test.db').exists(), 'safe test DB was not created')
 
 
+def test_eval_offline() -> None:
+    eval_dir = CLI_DIR / 'eval'
+    for path in (str(CLI_DIR), str(eval_dir)):
+        if path not in sys.path:
+            sys.path.insert(0, path)
+    import run_eval
+
+    outcome = run_eval.run_evaluation(offline=True, save=False)
+    summary = outcome['summary']
+    check(summary['scored'] == summary['total'] and summary['total'] > 0,
+          'offline eval should score every scenario')
+    check(set(summary['by_dimension'].keys()) == set(run_eval.DIMENSION_KEYS),
+          'offline eval summary must cover every rubric dimension')
+    check('CHARACTER-FIDELITY SCORECARD' in outcome['scorecard'],
+          'offline eval should render a scorecard')
+    check(outcome['saved_path'] == '', 'offline eval must not write a results file')
+
+    subset = run_eval.run_evaluation(offline=True, subset='comfort', save=False)
+    cats = {r['scenario']['category'] for r in subset['records']}
+    check(cats == {'comfort'}, 'subset filter should keep only the requested category')
+
+
 def main() -> int:
     compile_python()
     print('compile_python ok')
@@ -714,6 +736,8 @@ def main() -> int:
     print('dual_example_banks ok')
     test_context_translation_cache()
     print('context_translation_cache ok')
+    test_eval_offline()
+    print('eval_offline ok')
     test_package_audit()
     print('package_audit ok')
     test_gui_offscreen()

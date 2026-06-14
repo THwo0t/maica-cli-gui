@@ -36,6 +36,8 @@ DATA_DIR = CLI_DIR / "data"
 
 if str(CLI_DIR) not in sys.path:
     sys.path.insert(0, str(CLI_DIR))
+if str(EVAL_DIR) not in sys.path:
+    sys.path.insert(0, str(EVAL_DIR))
 
 from judge import DIMENSION_KEYS, judge_reply  # noqa: E402
 
@@ -237,39 +239,128 @@ def _delta(current: float, previous: float | None) -> str:
     return f"{diff:+.2f}"
 
 
-def print_scorecard(summary: dict[str, Any], records: list[dict[str, Any]], previous: dict[str, Any] | None) -> None:
+def format_scorecard(summary: dict[str, Any], records: list[dict[str, Any]], previous: dict[str, Any] | None) -> str:
     prev_summary = (previous or {}).get("summary") or {}
     prev_dims = prev_summary.get("by_dimension") or {}
     prev_cats = prev_summary.get("by_category") or {}
 
-    print("\n" + "=" * 60)
-    print("MONIKA CHARACTER-FIDELITY SCORECARD")
-    print("=" * 60)
-    print(f"scenarios scored: {summary['scored']}/{summary['total']}")
+    lines: list[str] = []
+    lines.append("=" * 60)
+    lines.append("MONIKA CHARACTER-FIDELITY SCORECARD")
+    lines.append("=" * 60)
+    lines.append(f"scenarios scored: {summary['scored']}/{summary['total']}")
     if previous:
-        print(f"baseline: {previous.get('commit', '?')} @ {previous.get('timestamp', '?')}")
-    print(f"\nOVERALL: {summary['overall']:.2f} / 5     (Δ {_delta(summary['overall'], prev_summary.get('overall'))})")
+        lines.append(f"baseline: {previous.get('commit', '?')} @ {previous.get('timestamp', '?')}")
+    lines.append("")
+    lines.append(f"OVERALL: {summary['overall']:.2f} / 5     (Δ {_delta(summary['overall'], prev_summary.get('overall'))})")
 
-    print("\nby dimension:")
+    lines.append("")
+    lines.append("by dimension:")
     for key in DIMENSION_KEYS:
         cur = summary["by_dimension"].get(key, 0.0)
-        print(f"  {key:<14} {cur:.2f}   (Δ {_delta(cur, prev_dims.get(key))})")
+        lines.append(f"  {key:<14} {cur:.2f}   (Δ {_delta(cur, prev_dims.get(key))})")
 
-    print("\nby category:")
+    lines.append("")
+    lines.append("by category:")
     for cat, cur in summary["by_category"].items():
-        print(f"  {cat:<14} {cur:.2f}   (Δ {_delta(cur, prev_cats.get(cat))})")
+        lines.append(f"  {cat:<14} {cur:.2f}   (Δ {_delta(cur, prev_cats.get(cat))})")
 
     # Lowest-scoring replies for human calibration.
     judged = [r for r in records if r.get("judgement") and r["judgement"].get("overall")]
     judged.sort(key=lambda r: r["judgement"]["overall"])
-    print("\nlowest-scoring replies (eyeball these to calibrate the rubric):")
+    lines.append("")
+    lines.append("lowest-scoring replies (eyeball these to calibrate the rubric):")
     for r in judged[:3]:
         j = r["judgement"]
-        print(f"\n  [{r['scenario']['id']}]  overall {j['overall']:.2f}")
-        print(f"  user : {r['scenario'].get('user_input', '')}")
-        print(f"  reply: {r.get('reply', '')}")
-        print(f"  judge: {j.get('overall_comment', '')}")
-    print("\n" + "=" * 60)
+        lines.append("")
+        lines.append(f"  [{r['scenario']['id']}]  overall {j['overall']:.2f}")
+        lines.append(f"  user : {r['scenario'].get('user_input', '')}")
+        lines.append(f"  reply: {r.get('reply', '')}")
+        lines.append(f"  judge: {j.get('overall_comment', '')}")
+    lines.append("")
+    lines.append("=" * 60)
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Orchestration (shared by CLI and GUI)
+# ---------------------------------------------------------------------------
+
+def run_evaluation(
+    offline: bool = False,
+    subset: str = "",
+    judge_model: str = "",
+    save: bool = True,
+    progress: Any = None,
+) -> dict[str, Any]:
+    """Run the full evaluation and return summary, records, previous, scorecard.
+
+    ``progress`` is an optional callable taking a single status string; it lets
+    a GUI show per-scenario progress without this module knowing about Qt.
+    """
+
+    def report(message: str) -> None:
+        if progress:
+            progress(message)
+
+    scenarios = load_scenarios(subset)
+    if not scenarios:
+        raise ValueError("no scenarios matched")
+
+    base_config = build_base_config(offline)
+    if offline:
+        judge_client: Any = _FakeJudgeClient()
+    else:
+        from client import OpenAICompatibleClient
+
+        judge_client = OpenAICompatibleClient(base_config)
+
+    records: list[dict[str, Any]] = []
+    for index, scenario in enumerate(scenarios, start=1):
+        sid = scenario.get("id", f"scenario_{index}")
+        report(f"[{index}/{len(scenarios)}] {sid} ...")
+        result = run_scenario(scenario, base_config, offline)
+        if not result.get("ok"):
+            report(f"    chat failed: {result.get('error', 'unknown error')}")
+            records.append({"scenario": scenario, "reply": "", "result_error": result.get("error", ""), "judgement": {}})
+            continue
+        reply = result.get("text", "")
+        gold = load_gold(scenario.get("category", ""), scenario.get("intent", ""), scenario.get("language", "en"))
+        try:
+            judgement = judge_reply(judge_client, scenario, reply, gold, judge_model or None)
+        except Exception as exc:
+            report(f"    judge failed: {exc}")
+            judgement = {}
+        records.append(
+            {
+                "scenario": scenario,
+                "reply": reply,
+                "emotion": result.get("emotion", ""),
+                "gold_count": len(gold),
+                "judgement": judgement,
+            }
+        )
+
+    summary = aggregate(records)
+    previous = latest_previous_result()
+    scorecard = format_scorecard(summary, records, previous)
+
+    saved_path = ""
+    if save and not offline:
+        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
+        payload = {
+            "timestamp": stamp,
+            "commit": git_commit(),
+            "subset": subset,
+            "summary": summary,
+            "records": records,
+        }
+        out_path = RESULTS_DIR / f"{stamp}.json"
+        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        saved_path = str(out_path)
+
+    return {"summary": summary, "records": records, "previous": previous, "scorecard": scorecard, "saved_path": saved_path}
 
 
 # ---------------------------------------------------------------------------
@@ -284,63 +375,21 @@ def main() -> int:
     parser.add_argument("--no-save", action="store_true", help="do not write a results file")
     args = parser.parse_args()
 
-    scenarios = load_scenarios(args.subset)
-    if not scenarios:
-        print("no scenarios matched", file=sys.stderr)
+    try:
+        outcome = run_evaluation(
+            offline=args.offline,
+            subset=args.subset,
+            judge_model=args.judge_model,
+            save=not args.no_save,
+            progress=lambda message: print(message, flush=True),
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
         return 1
 
-    base_config = build_base_config(args.offline)
-    if args.offline:
-        judge_client: Any = _FakeJudgeClient()
-    else:
-        from client import OpenAICompatibleClient
-
-        judge_client = OpenAICompatibleClient(base_config)
-
-    records: list[dict[str, Any]] = []
-    for index, scenario in enumerate(scenarios, start=1):
-        sid = scenario.get("id", f"scenario_{index}")
-        print(f"[{index}/{len(scenarios)}] {sid} ...", flush=True)
-        result = run_scenario(scenario, base_config, args.offline)
-        if not result.get("ok"):
-            print(f"    chat failed: {result.get('error', 'unknown error')}", file=sys.stderr)
-            records.append({"scenario": scenario, "reply": "", "result_error": result.get("error", ""), "judgement": {}})
-            continue
-        reply = result.get("text", "")
-        gold = load_gold(scenario.get("category", ""), scenario.get("intent", ""), scenario.get("language", "en"))
-        try:
-            judgement = judge_reply(judge_client, scenario, reply, gold, args.judge_model or None)
-        except Exception as exc:
-            print(f"    judge failed: {exc}", file=sys.stderr)
-            judgement = {}
-        records.append(
-            {
-                "scenario": scenario,
-                "reply": reply,
-                "emotion": result.get("emotion", ""),
-                "gold_count": len(gold),
-                "judgement": judgement,
-            }
-        )
-
-    summary = aggregate(records)
-    previous = latest_previous_result()
-    print_scorecard(summary, records, previous)
-
-    if not args.no_save and not args.offline:
-        RESULTS_DIR.mkdir(parents=True, exist_ok=True)
-        stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-        payload = {
-            "timestamp": stamp,
-            "commit": git_commit(),
-            "subset": args.subset,
-            "summary": summary,
-            "records": records,
-        }
-        out_path = RESULTS_DIR / f"{stamp}.json"
-        out_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"saved: {out_path}")
-
+    print("\n" + outcome["scorecard"])
+    if outcome["saved_path"]:
+        print(f"saved: {outcome['saved_path']}")
     return 0
 
 
