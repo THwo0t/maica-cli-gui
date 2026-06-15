@@ -54,11 +54,20 @@ APP_VERSION = '0.11.10'
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
 
+_PET_DIR = ROOT_DIR / 'monika desktop pet'
+if _PET_DIR.exists() and str(_PET_DIR) not in sys.path:
+    sys.path.insert(0, str(_PET_DIR))
+
 from assets import AssetManager, normalize_emotion  # noqa: E402
 from diagnostics import collect_report  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
 from stt import create_stt  # noqa: E402
 from tts import create_tts, redact_secret  # noqa: E402
+
+try:
+    from monika_pet import PetWindow  # noqa: E402
+except Exception:
+    PetWindow = None  # type: ignore
 
 
 PROFILE_FIELDS = ('player_name', 'birthday', 'location', 'nicknames', 'affection')
@@ -960,6 +969,7 @@ class MainWindow(QMainWindow):
         self.data_dialog: DataManagerDialog | None = None
         self.settings_dialog: SettingsDialog | None = None
         self.eval_dialog: EvalDialog | None = None
+        self.pet_window: Any = None
         self.current_config: dict[str, Any] = {}
         self.last_user_activity = dt.datetime.now()
         self.idle_spire_sent = False
@@ -1082,6 +1092,7 @@ class MainWindow(QMainWindow):
         self.settings_button = QPushButton('Settings')
         self.diagnostics_button = QPushButton('Diagnostics')
         self.eval_button = QPushButton('Eval')
+        self.pet_button = QPushButton('Pet')
         self.debug_button = QPushButton('Debug')
         self.clear_button = QPushButton('Clear')
         # Tier the buttons: accent primaries, tinted secondaries, quiet ghosts.
@@ -1090,7 +1101,7 @@ class MainWindow(QMainWindow):
         for button in (self.tts_button, self.stop_tts_button, self.listen_button):
             button.setProperty('btnRole', 'secondary')
         for button in (self.data_button, self.settings_button, self.diagnostics_button,
-                       self.eval_button, self.debug_button, self.clear_button):
+                       self.eval_button, self.pet_button, self.debug_button, self.clear_button):
             button.setProperty('btnRole', 'ghost')
         self.send_button.clicked.connect(self.send_chat)
         self.spire_button.clicked.connect(self.send_spire)
@@ -1101,6 +1112,7 @@ class MainWindow(QMainWindow):
         self.settings_button.clicked.connect(self.open_settings)
         self.diagnostics_button.clicked.connect(self.export_diagnostics)
         self.eval_button.clicked.connect(self.open_eval)
+        self.pet_button.clicked.connect(self.toggle_pet)
         self.debug_button.clicked.connect(self.toggle_debug_panel)
         self.clear_button.clicked.connect(self.chat_log.clear)
         button_row.addWidget(self.send_button)
@@ -1115,6 +1127,7 @@ class MainWindow(QMainWindow):
         button_row2.addWidget(self.settings_button)
         button_row2.addWidget(self.diagnostics_button)
         button_row2.addWidget(self.eval_button)
+        button_row2.addWidget(self.pet_button)
         button_row2.addWidget(self.debug_button)
         button_row2.addWidget(self.clear_button)
         right_layout.addLayout(button_row2)
@@ -1144,6 +1157,8 @@ class MainWindow(QMainWindow):
         self.tts.stop()
         self.idle_timer.stop()
         self.typing_timer.stop()
+        if self.pet_window is not None:
+            self.pet_window.close()
         self.shutdown_requested.emit()
         self.thread.quit()
         if not self.thread.wait(5000):
@@ -1345,6 +1360,31 @@ class MainWindow(QMainWindow):
         self.eval_dialog.raise_()
         self.eval_dialog.activateWindow()
 
+    def toggle_pet(self) -> None:
+        if PetWindow is None:
+            self.add_system_message('Desktop pet is unavailable (monika_pet not importable).')
+            return
+        if self.pet_window is None:
+            # Hosted mode: the pet shares this window's single engine; it does
+            # not start its own. Same Monika, two surfaces.
+            self.pet_window = PetWindow(host_engine=False)
+            self.pet_window.interaction_requested.connect(self._on_pet_interaction)
+            self.pet_window.show_normal()
+            return
+        if self.pet_window.isVisible():
+            self.pet_window.hide()
+        else:
+            self.pet_window.show_normal()
+
+    def _on_pet_interaction(self, _kind: str) -> None:
+        # Clicking the pet asks Monika for a proactive line (without touching the
+        # chat input); the reply is mirrored to the pet face in _handle_result.
+        if not self.input_box.isEnabled():
+            return
+        self.last_user_activity = dt.datetime.now()
+        self.set_busy(True)
+        self.spire_requested.emit('')
+
     def request_data_snapshot(self) -> None:
         self.data_snapshot_requested.emit()
 
@@ -1483,6 +1523,8 @@ class MainWindow(QMainWindow):
             if self.streaming_active:
                 self._finish_streaming_message(emotion, result.get('response_time', ''), final_text=reply_text)
             self.add_monika_message(reply_text, emotion, result.get('response_time', ''))
+        if self.pet_window is not None and self.pet_window.isVisible() and reply_text:
+            self.pet_window.show_line(reply_text, emotion)
         self.update_debug_panel(result)
         if self.tts_enabled and reply_text:
             self.add_system_message('TTS is synthesizing/playing...')
