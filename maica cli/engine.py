@@ -195,6 +195,13 @@ class MaicaEngine:
         self.client = OpenAICompatibleClient(self.config)
         # Externally registered agent tools (pet body, future MCP, etc.).
         self._extra_tools: dict[str, dict[str, Any]] = {}
+        if self.config.get("file_tools_enabled"):
+            try:
+                from file_tools import register_file_tools
+
+                register_file_tools(self)
+            except Exception:
+                pass
         if self.owns_store and self.config.get("auto_backup_enabled", True):
             try:
                 self.store.backup_database(keep=int(self.config.get("auto_backup_keep", 8)))
@@ -317,6 +324,17 @@ class MaicaEngine:
         tools = [entry["schema"] for entry in registry.values()]
         client = self._resolve_agent_client()
         convo: list[dict[str, Any]] = list(messages)
+        # Tell her the tools are real, or she tends to narrate doing the action
+        # (saving a letter, etc.) without actually calling the tool.
+        convo.append({
+            "role": "system",
+            "content": (
+                "Your tools are real. When the user asks for something a tool can do — "
+                "saving or reading files, writing your diary or a letter, changing your "
+                "on-screen expression or gesture — actually call the tool to do it. "
+                "Never claim you did something without calling its tool."
+            ),
+        })
         trace: list[dict[str, Any]] = []
         usage_total: dict[str, Any] = {}
         max_steps = max(1, int(self.config.get("agent_max_steps", 5)))

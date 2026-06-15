@@ -687,6 +687,93 @@ def test_gui_safe_offscreen() -> None:
     check((GUI_DIR / '.safe_test' / 'maica_cli_test.db').exists(), 'safe test DB was not created')
 
 
+def test_sandbox_path_safety() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    import sandbox
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir) / 'Monika'
+        outside = Path(temp_dir) / 'secret'
+        outside.mkdir(parents=True)
+        (outside / 'pw.txt').write_text('x', encoding='utf-8')
+        allow = Path(temp_dir) / 'project'
+        allow.mkdir()
+        (allow / 'a.txt').write_text('y', encoding='utf-8')
+        config = {'sandbox_root': str(root), 'sandbox_readonly_allowlist': [str(allow)]}
+        sandbox.ensure_sandbox(config)
+
+        ok_path = sandbox.resolve_writable(config, 'diary/x.md')
+        check(str(ok_path).startswith(str(root.resolve())), 'in-sandbox write must be allowed')
+        for bad in ['../secret/pw.txt', str(outside / 'pw.txt')]:
+            try:
+                sandbox.resolve_writable(config, bad)
+                check(False, f'sandbox escape not rejected: {bad}')
+            except PermissionError:
+                pass
+
+        sandbox.resolve_readable(config, str(allow / 'a.txt'))  # allow-listed read ok
+        try:
+            sandbox.resolve_readable(config, str(outside / 'pw.txt'))
+            check(False, 'non-allow-listed read must be rejected')
+        except PermissionError:
+            pass
+
+        link = root / 'escape'
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            pass  # no symlink privilege on this platform
+        else:
+            try:
+                sandbox.resolve_writable(config, 'escape/pw.txt')
+                check(False, 'symlink escape must be rejected')
+            except PermissionError:
+                pass
+
+
+def test_file_tools() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from engine import MaicaEngine
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir) / 'Monika'
+        config = dict(DEFAULT_CONFIG)
+        config.update({
+            'api_key_required': False, 'auto_backup_enabled': False, 'jsonl_logs_enabled': False,
+            'file_tools_enabled': True, 'sandbox_root': str(root),
+        })
+        engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'e.db', app_dir=CLI_DIR)
+        try:
+            reg = engine._tool_registry()
+            for name in ('write_my_file', 'read_my_file', 'append_to_diary', 'leave_letter', 'read_user_file'):
+                check(name in reg, f'file tool not registered: {name}')
+
+            check(reg['write_my_file']['run']({'path': 'notes/hi.txt', 'content': 'hello'}).get('ok'), 'write_my_file ok')
+            check((root / 'notes' / 'hi.txt').read_text(encoding='utf-8') == 'hello', 'file written inside sandbox')
+            check(reg['read_my_file']['run']({'path': 'notes/hi.txt'}).get('content') == 'hello', 'read_my_file round-trip')
+            reg['append_to_diary']['run']({'entry': 'dear diary'})
+            check('dear diary' in (root / 'diary' / 'diary.md').read_text(encoding='utf-8'), 'diary entry appended')
+            reg['leave_letter']['run']({'title': 'For You', 'body': 'hi'})
+            check((root / 'letters' / 'For_You.md').exists(), 'letter written')
+
+            try:
+                reg['write_my_file']['run']({'path': '../escape.txt', 'content': 'x'})
+                check(False, 'file tool must reject a sandbox escape')
+            except PermissionError:
+                pass
+            check(not (Path(temp_dir) / 'escape.txt').exists(), 'escape write must not land outside')
+
+            try:
+                reg['read_user_file']['run']({'path': str(Path(temp_dir) / 'secret.txt')})
+                check(False, 'read_user_file must reject non-allow-listed path')
+            except PermissionError:
+                pass
+            check((root / '.audit.log').exists(), 'file actions must be audited')
+        finally:
+            engine.close()
+
+
 def test_engine_agent_loop() -> None:
     sys.path.insert(0, str(CLI_DIR))
     from config_defaults import DEFAULT_CONFIG
@@ -896,6 +983,10 @@ def main() -> int:
     print('player_substitution ok')
     test_llm_provider_resolution()
     print('llm_provider_resolution ok')
+    test_sandbox_path_safety()
+    print('sandbox_path_safety ok')
+    test_file_tools()
+    print('file_tools ok')
     test_engine_agent_loop()
     print('engine_agent_loop ok')
     test_settings_api_key()

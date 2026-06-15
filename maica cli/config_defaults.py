@@ -24,6 +24,12 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # on, a turn may call registered tools in a bounded loop before replying.
     "agent_tools_enabled": False,
     "agent_max_steps": 5,
+    # File tools (P2): her own sandbox space + reading allow-listed user files.
+    # Off by default. sandbox_root empty -> ~/Monika. Allow-list is empty so she
+    # can only read your files in folders you explicitly add.
+    "file_tools_enabled": False,
+    "sandbox_root": "",
+    "sandbox_readonly_allowlist": [],
     "temperature": 0.75,
     "top_p": 0.95,
     "max_tokens": 900,
