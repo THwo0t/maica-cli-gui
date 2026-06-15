@@ -9,6 +9,7 @@ The CLI remains a debugger and is not started in the background.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 import datetime as dt
 import threading
@@ -1859,7 +1860,25 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
 """
 
 
+def _prepare_linux_input_method() -> None:
+    """Make CJK input work on Linux/Wayland with the bundled (pip) Qt.
+
+    pip's PySide6 ships its own Qt whose plugins do NOT include the fcitx
+    input-context plugin. With QT_IM_MODULE=fcitx the app then fails to load any
+    input method, so Chinese cannot be typed and Ctrl+Space does nothing. On a
+    Wayland session the compositor's text-input protocol drives fcitx5 without
+    that plugin, so prefer the Wayland platform and drop the fcitx im-module.
+    """
+    if not sys.platform.startswith('linux'):
+        return
+    if os.environ.get('WAYLAND_DISPLAY'):
+        os.environ.setdefault('QT_QPA_PLATFORM', 'wayland')
+        if os.environ.get('QT_IM_MODULE', '').lower() in ('fcitx', 'fcitx5'):
+            os.environ.pop('QT_IM_MODULE', None)
+
+
 def main() -> int:
+    _prepare_linux_input_method()
     parser = argparse.ArgumentParser(description='MAICA GUI')
     parser.add_argument('--config', default='', help='Optional path to config.json')
     parser.add_argument('--db', default='', help='Optional path to SQLite database')
