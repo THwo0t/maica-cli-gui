@@ -13,13 +13,18 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "api_key": "",
     "api_key_required": True,
     "model": "deepseek-chat",
-    # LLM call mode: "split" routes agent/tool turns to the agent provider
-    # below while casual chat stays on the main provider; "unified" uses the
-    # main provider for everything.
-    "llm_call_mode": "split",
+    # LLM call mode. "unified" (default) runs everything — including tool use —
+    # on the main provider, which is fast and handles tools well. "split"
+    # routes the agent loop to the agent provider below (e.g. a heavier
+    # reasoning model); that model is slower, so it is opt-in.
+    "llm_call_mode": "unified",
     "agent_api_base": "",
     "agent_api_key": "",
     "agent_model": "",
+    # Token budget for agent-loop turns. Reasoning models spend tokens thinking
+    # before answering, so the loop needs more headroom than normal chat or the
+    # reply comes back empty.
+    "agent_max_tokens": 2048,
     # Agentic tool calling. Off by default: normal chat stays single-shot. When
     # on, a turn may call registered tools in a bounded loop before replying.
     "agent_tools_enabled": False,

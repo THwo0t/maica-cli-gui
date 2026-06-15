@@ -340,9 +340,13 @@ class MaicaEngine:
         trace: list[dict[str, Any]] = []
         usage_total: dict[str, Any] = {}
         max_steps = max(1, int(self.config.get("agent_max_steps", 5)))
+        # Reasoning models spend tokens thinking before answering; give the loop
+        # enough headroom or the reply comes back empty.
+        overrides = {"max_tokens": max(int(self.config.get("max_tokens", 900) or 900),
+                                       int(self.config.get("agent_max_tokens", 2048) or 2048))}
 
         for _ in range(max_steps):
-            result = client.complete_with_tools(convo, tools)
+            result = client.complete_with_tools(convo, tools, overrides)
             self._accumulate_usage(usage_total, result.get("usage"))
             message = result.get("message") or {}
             tool_calls = message.get("tool_calls") or []
@@ -374,7 +378,7 @@ class MaicaEngine:
                     }
                 )
         # Out of steps: force a final answer without offering more tools.
-        final = self._resolve_agent_client().complete_with_tools(convo, None)
+        final = self._resolve_agent_client().complete_with_tools(convo, None, overrides)
         self._accumulate_usage(usage_total, final.get("usage"))
         return str((final.get("message") or {}).get("content") or ""), usage_total, trace
 
