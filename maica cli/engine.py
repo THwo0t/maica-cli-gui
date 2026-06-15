@@ -18,6 +18,7 @@ from embedding_service_client import build_service_memory_index
 from mfocus import build_messages, build_spire_messages
 from mfocus import special_events_for_today
 from mtrigger import apply_mtrigger
+from persona import relationship_stage
 from response import limit_dialogue_sentences, parse_assistant_response
 from spire_topics import choose_spire_topic
 from store import Store
@@ -248,11 +249,121 @@ class MaicaEngine:
             self.config.get("stt_bailian_api_key", ""),
         )
 
+    # ------------------------------------------------------------------
+    # Agentic tool calling (P1 foundation)
+    # ------------------------------------------------------------------
+    def _tool_registry(self) -> dict[str, dict[str, Any]]:
+        """Map tool name -> {schema, run}. Add new capabilities here.
+
+        P1 ships one read-only, no-filesystem demo tool to exercise the loop.
+        File/sandbox/vision tools come in later phases on top of this seam.
+        """
+        return {
+            "check_our_closeness": {
+                "schema": {
+                    "type": "function",
+                    "function": {
+                        "name": "check_our_closeness",
+                        "description": (
+                            "Look up how close you and the user currently are: affection score, "
+                            "relationship stage, and how many days you have known each other. "
+                            "Call this when grounding a reply in your real relationship state."
+                        ),
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                },
+                "run": self._tool_check_our_closeness,
+            },
+        }
+
+    def _tool_check_our_closeness(self, _args: dict[str, Any]) -> dict[str, Any]:
+        affection = self.store.affection()
+        language = str(self.config.get("language") or "en")
+        days_known = None
+        first_seen = self.store.get_profile_value("first_seen", "")
+        if first_seen:
+            try:
+                days_known = max(0, (dt.datetime.now() - dt.datetime.fromisoformat(first_seen)).days)
+            except ValueError:
+                days_known = None
+        return {
+            "affection": round(affection, 1),
+            "relationship_stage": relationship_stage(affection, language),
+            "days_known": days_known,
+        }
+
+    def _resolve_agent_client(self) -> Any:
+        if getattr(self, "_agent_client_override", None) is not None:
+            return self._agent_client_override
+        provider = resolve_llm_provider(self.config, "agent")
+        return OpenAICompatibleClient({**self.config, **provider})
+
+    def _run_agent_loop(self, messages: list[dict[str, Any]]) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+        """Run a bounded tool-using loop and return (final_text, usage, trace)."""
+        registry = self._tool_registry()
+        tools = [entry["schema"] for entry in registry.values()]
+        client = self._resolve_agent_client()
+        convo: list[dict[str, Any]] = list(messages)
+        trace: list[dict[str, Any]] = []
+        usage_total: dict[str, Any] = {}
+        max_steps = max(1, int(self.config.get("agent_max_steps", 5)))
+
+        for _ in range(max_steps):
+            result = client.complete_with_tools(convo, tools)
+            self._accumulate_usage(usage_total, result.get("usage"))
+            message = result.get("message") or {}
+            tool_calls = message.get("tool_calls") or []
+            if not tool_calls:
+                return str(message.get("content") or ""), usage_total, trace
+            # Echo the assistant's tool request, then answer each call.
+            convo.append({"role": "assistant", "content": message.get("content") or "", "tool_calls": tool_calls})
+            for call in tool_calls:
+                fn = call.get("function") or {}
+                name = str(fn.get("name") or "")
+                try:
+                    args = json.loads(fn.get("arguments") or "{}")
+                except (TypeError, ValueError):
+                    args = {}
+                entry = registry.get(name)
+                if entry is None:
+                    output: Any = {"error": f"unknown tool: {name}"}
+                else:
+                    try:
+                        output = entry["run"](args)
+                    except Exception as exc:  # surface tool errors to the model, do not crash
+                        output = {"error": self._safe_error(exc)}
+                trace.append({"tool": name, "args": args, "output": output})
+                convo.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call.get("id"),
+                        "content": json.dumps(output, ensure_ascii=False),
+                    }
+                )
+        # Out of steps: force a final answer without offering more tools.
+        final = self._resolve_agent_client().complete_with_tools(convo, None)
+        self._accumulate_usage(usage_total, final.get("usage"))
+        return str((final.get("message") or {}).get("content") or ""), usage_total, trace
+
+    @staticmethod
+    def _accumulate_usage(total: dict[str, Any], usage: Any) -> None:
+        if not isinstance(usage, dict):
+            return
+        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+            value = usage.get(key)
+            if isinstance(value, (int, float)):
+                total[key] = total.get(key, 0) + value
+
     def chat(self, user_input: str, stream_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
         started = time.time()
         try:
             messages, mfocus_plan = build_messages(self.store, self.config, user_input, self.client)
-            raw_reply, usage, streamed = self._call_chat(messages, "chat", stream_callback)
+            if self.config.get("agent_tools_enabled"):
+                raw_reply, usage, agent_trace = self._run_agent_loop(messages)
+                streamed = False
+                mfocus_plan["agent_trace"] = agent_trace
+            else:
+                raw_reply, usage, streamed = self._call_chat(messages, "chat", stream_callback)
             parsed = parse_assistant_response(raw_reply)
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)

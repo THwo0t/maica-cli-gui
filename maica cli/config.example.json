@@ -7,6 +7,8 @@
   "agent_api_base": "",
   "agent_api_key": "",
   "agent_model": "",
+  "agent_tools_enabled": false,
+  "agent_max_steps": 5,
   "temperature": 0.75,
   "top_p": 0.95,
   "max_tokens": 900,

@@ -46,8 +46,7 @@ class OpenAICompatibleClient:
             headers["Authorization"] = "Bearer " + api_key
         return headers
 
-    def chat_with_usage(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
-        body = self._body(messages, overrides)
+    def _request(self, body: dict[str, Any]) -> dict[str, Any]:
         request = urllib.request.Request(
             self.endpoint(),
             data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
@@ -61,13 +60,38 @@ class OpenAICompatibleClient:
             detail = exc.read().decode("utf-8", "replace")
             api_key = os.environ.get("MAICA_CLI_API_KEY") or str(self.config.get("api_key") or "")
             raise RuntimeError(f"HTTP {exc.code}: {redact_secret(detail, api_key)}") from exc
+        return json.loads(raw)
 
-        payload = json.loads(raw)
+    def chat_with_usage(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = self._body(messages, overrides)
+        payload = self._request(body)
         return {
             "content": str(payload["choices"][0]["message"]["content"]).strip(),
             "usage": payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
             "model": str(payload.get("model") or body.get("model") or ""),
             "raw": payload,
+        }
+
+    def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        overrides: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Return the raw assistant message (content + any tool_calls) plus usage.
+
+        Used by the agent loop: unlike chat_with_usage this preserves tool_calls
+        and lets content be empty when the model is requesting a tool.
+        """
+        body = self._body(messages, overrides)
+        if tools:
+            body["tools"] = tools
+        payload = self._request(body)
+        choice = (payload.get("choices") or [{}])[0]
+        return {
+            "message": choice.get("message") if isinstance(choice.get("message"), dict) else {},
+            "usage": payload.get("usage") if isinstance(payload.get("usage"), dict) else {},
+            "model": str(payload.get("model") or body.get("model") or ""),
         }
 
     def chat(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> str:

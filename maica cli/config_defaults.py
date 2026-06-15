@@ -20,6 +20,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "agent_api_base": "",
     "agent_api_key": "",
     "agent_model": "",
+    # Agentic tool calling. Off by default: normal chat stays single-shot. When
+    # on, a turn may call registered tools in a bounded loop before replying.
+    "agent_tools_enabled": False,
+    "agent_max_steps": 5,
     "temperature": 0.75,
     "top_p": 0.95,
     "max_tokens": 900,

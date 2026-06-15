@@ -687,6 +687,69 @@ def test_gui_safe_offscreen() -> None:
     check((GUI_DIR / '.safe_test' / 'maica_cli_test.db').exists(), 'safe test DB was not created')
 
 
+def test_engine_agent_loop() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from engine import MaicaEngine
+
+    class FakeAgentClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete_with_tools(self, messages, tools=None, overrides=None):
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    'message': {
+                        'role': 'assistant',
+                        'content': '',
+                        'tool_calls': [
+                            {'id': 'c1', 'function': {'name': 'check_our_closeness', 'arguments': '{}'}}
+                        ],
+                    },
+                    'usage': {'total_tokens': 5},
+                }
+            # Second call: the tool result is now in the conversation.
+            tool_msgs = [m for m in messages if m.get('role') == 'tool']
+            assert tool_msgs and 'affection' in tool_msgs[-1]['content'], 'tool result must be fed back'
+            return {
+                'message': {'role': 'assistant', 'content': json.dumps(
+                    {'text': 'We are closer than ever.', 'emotion': 'smile', 'action': {}}
+                )},
+                'usage': {'total_tokens': 6},
+            }
+
+    with tempfile.TemporaryDirectory(prefix='maica-agent-') as temp_dir:
+        config = dict(DEFAULT_CONFIG)
+        config.update(
+            {
+                'api_key_required': False,
+                'jsonl_logs_enabled': False,
+                'auto_backup_enabled': False,
+                'mfocus_mode': 'rule',
+                'mtrigger_mode': 'rule',
+                'style_enabled': False,
+                'metadata_extract_enabled': False,
+                'embedding_enabled': False,
+                'memory_embedding_enabled': False,
+                'embedding_service_enabled': False,
+                'agent_tools_enabled': True,
+            }
+        )
+        engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'agent.db', app_dir=CLI_DIR)
+        engine._agent_client_override = FakeAgentClient()
+        try:
+            result = engine.chat('how close are we?')
+            check(result['ok'], result.get('error', 'agent chat failed'))
+            check(result['text'] == 'We are closer than ever.', 'agent loop final reply mismatch')
+            trace = result['mfocus_plan'].get('agent_trace') or []
+            check(len(trace) == 1 and trace[0]['tool'] == 'check_our_closeness',
+                  'agent loop must record the tool call')
+            check('affection' in trace[0]['output'], 'tool output must include affection')
+        finally:
+            engine.close()
+
+
 def test_llm_provider_resolution() -> None:
     sys.path.insert(0, str(CLI_DIR))
     from engine import resolve_llm_provider
@@ -833,6 +896,8 @@ def main() -> int:
     print('player_substitution ok')
     test_llm_provider_resolution()
     print('llm_provider_resolution ok')
+    test_engine_agent_loop()
+    print('engine_agent_loop ok')
     test_settings_api_key()
     print('settings_api_key ok')
     test_eval_offline()
