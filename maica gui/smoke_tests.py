@@ -687,6 +687,43 @@ def test_gui_safe_offscreen() -> None:
     check((GUI_DIR / '.safe_test' / 'maica_cli_test.db').exists(), 'safe test DB was not created')
 
 
+def test_settings_api_key() -> None:
+    script = (
+        "import sys;"
+        f"sys.path.insert(0, {str(GUI_DIR)!r});"
+        "from PySide6.QtCore import QObject, Signal;"
+        "from PySide6.QtWidgets import QApplication, QLineEdit, QWidget;"
+        "import gui_app;"
+        "app=QApplication([]);"
+        "owner=type('O',(QWidget,),{'config_save_requested':Signal(dict)})();"
+        "dlg=gui_app.SettingsDialog(owner);"
+        "dlg.render({'api_base':'b','model':'m','api_key':'sk-secret'});"
+        "assert dlg.api_key.echoMode()==QLineEdit.EchoMode.Password,'key field must be masked';"
+        "assert dlg.api_key.text()=='','stored key must not be shown';"
+        "cap={};"
+        "owner.config_save_requested.connect(lambda u: cap.update(u));"
+        "dlg.save();"
+        "assert 'api_key' not in cap,'blank key must not be sent (keeps existing)';"
+        "cap.clear();"
+        "dlg.api_key.setText(' sk-new ');"
+        "dlg.save();"
+        "assert cap.get('api_key')=='sk-new','typed key must be sent, stripped';"
+        "print('OK')"
+    )
+    env = os.environ.copy()
+    env['QT_QPA_PLATFORM'] = 'offscreen'
+    completed = subprocess.run(
+        [sys.executable, '-c', script],
+        cwd=str(ROOT_DIR),
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=20,
+    )
+    check(completed.returncode == 0 and 'OK' in completed.stdout, completed.stderr or completed.stdout)
+
+
 def test_player_substitution() -> None:
     sys.path.insert(0, str(CLI_DIR))
     from example_bank import replace_player_word
@@ -768,6 +805,8 @@ def main() -> int:
     print('context_translation_cache ok')
     test_player_substitution()
     print('player_substitution ok')
+    test_settings_api_key()
+    print('settings_api_key ok')
     test_eval_offline()
     print('eval_offline ok')
     test_package_audit()

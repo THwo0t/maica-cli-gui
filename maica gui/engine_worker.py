@@ -517,6 +517,7 @@ class GuiEngineWorker(QObject):
     def _apply_config_updates(self, engine: MaicaEngine, updates: dict[str, Any]) -> list[str]:
         allowed = {
             'api_base': str,
+            'api_key': str,
             'model': str,
             'language': str,
             'temperature': float,

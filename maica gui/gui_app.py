@@ -343,6 +343,9 @@ class SettingsDialog(QDialog):
 
         self.api_base = QLineEdit()
         self.model = QLineEdit()
+        self.api_key = QLineEdit()
+        self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.api_key.setPlaceholderText('leave blank to keep current key')
         self.language = QComboBox()
         self.language.addItems(LANGUAGE_OPTIONS)
         self.temperature = QDoubleSpinBox()
@@ -418,6 +421,7 @@ class SettingsDialog(QDialog):
         self.stt_timeout.setRange(2, 30)
 
         form.addRow('API base', self.api_base)
+        form.addRow('API key', self.api_key)
         form.addRow('Model', self.model)
         form.addRow('Reply language', self.language)
         form.addRow('Temperature', self.temperature)
@@ -467,7 +471,7 @@ class SettingsDialog(QDialog):
         scroll.setWidget(form_host)
         layout.addWidget(scroll, 1)
 
-        note = QLabel('Secrets such as API keys are intentionally not shown here. Edit local config.json if needed.')
+        note = QLabel('The API key is masked and never displayed; type a new one to switch providers, or leave it blank to keep the current key. Other secrets (TTS/STT keys) are still edited in config.json.')
         note.setWordWrap(True)
         layout.addWidget(note)
 
@@ -484,6 +488,13 @@ class SettingsDialog(QDialog):
     def render(self, config: dict[str, Any]) -> None:
         self.api_base.setText(str(config.get('api_base') or ''))
         self.model.setText(str(config.get('model') or ''))
+        # Never echo the stored secret; just signal whether one is set.
+        self.api_key.setText('')
+        self.api_key.setPlaceholderText(
+            'current key saved — leave blank to keep'
+            if config.get('api_key')
+            else 'no key set — paste one to enable'
+        )
         self._set_combo(self.language, str(config.get('language') or 'en'))
         self.temperature.setValue(float(config.get('temperature') or 0.22))
         self.top_p.setValue(float(config.get('top_p') or 0.7))
@@ -575,6 +586,11 @@ class SettingsDialog(QDialog):
             'stt_language': self.stt_language.currentText(),
             'stt_timeout': self.stt_timeout.value(),
         }
+        # Only overwrite the saved API key when the user actually typed a new
+        # one; a blank field keeps the existing key.
+        new_key = self.api_key.text().strip()
+        if new_key:
+            updates['api_key'] = new_key
         self.owner.config_save_requested.emit(updates)
 
 
