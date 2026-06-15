@@ -1,0 +1,12 @@
+{
+  "scale": 0.42,
+  "opacity": 0.96,
+  "always_on_top": true,
+  "drag_enabled": true,
+  "idle_seconds": 48,
+  "reminders_enabled": true,
+  "reminder_minutes": 45,
+  "focus_minutes": 25,
+  "bubble_seconds": 7,
+  "show_tray_icon": true
+}

@@ -47,6 +47,16 @@ maica gui assets/mas_raw/
 !maica gui asset inventory/
 !maica gui asset inventory/**
 
+# Desktop pet companion (code + runtime art). Raw source art and local state
+# stay out; the pet's own .gitignore also excludes private config/state.
+!monika desktop pet/
+!monika desktop pet/**
+monika desktop pet/assets/chibi_raw/
+monika desktop pet/pet_config.json
+monika desktop pet/pet_state.json
+monika desktop pet/__pycache__/
+monika desktop pet/**/__pycache__/
+
 # Local archives and external source/model directories remain ignored by default:
 # MAICA/, MAICA_ChatSubmod/, MAICA_Server_Submod/, MAS/, Qwen3-Embedding-0.6B/,
 # MAICA_ds_basis/, *.zip, *.rpa, *.safetensors, etc.
