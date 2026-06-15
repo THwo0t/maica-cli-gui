@@ -458,11 +458,14 @@ class PetWindow(QWidget):
     def apply_window_flags(self) -> None:
         flags = Qt.WindowType.FramelessWindowHint
         app = QApplication.instance()
-        is_wayland = bool(app) and app.platformName().lower().startswith('wayland')
-        # On X11/Windows the Tool type keeps the pet out of the taskbar. On
-        # Wayland KWin treats Tool windows as focus-following utilities that do
-        # NOT stay above other apps, so drop it there to honor stay-on-top.
-        if not is_wayland:
+        platform_name = app.platformName().lower() if app else ''
+        is_wayland = platform_name.startswith('wayland')
+        is_macos = sys.platform == 'darwin' or platform_name == 'cocoa'
+        # Qt.Tool keeps the pet out of the taskbar and on top on X11/Windows.
+        # But on Wayland KWin treats Tool windows as focus-following utilities
+        # (won't stay above other apps), and on macOS a Tool window hides when
+        # the app deactivates. So drop Tool on those two; keep stay-on-top.
+        if not is_wayland and not is_macos:
             flags |= Qt.WindowType.Tool
         if self.config.get('always_on_top', True):
             flags |= Qt.WindowType.WindowStaysOnTopHint
