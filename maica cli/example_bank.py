@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -291,6 +292,37 @@ def player_display_name(store: Any) -> str:
 
 def replace_player_placeholder(text: str, store: Any) -> str:
     return str(text or '').replace('{player}', player_display_name(store)).replace('[player]', player_display_name(store))
+
+
+# Words that form a compound noun with "player" (e.g. "music player") and must
+# not be mistaken for a reference to the user.
+_PLAYER_COMPOUND_PREV = {
+    'music', 'video', 'media', 'audio', 'cd', 'dvd', 'mp3', 'mp4',
+    'team', 'record', 'disc', 'cassette', 'tape', 'game', 'vinyl',
+}
+_PLAYER_WORD_RE = re.compile(r'(?<![\w-])[Pp]layer(?![\w-])')
+
+
+def replace_player_word(text: str, store: Any) -> str:
+    """Replace the bare word 'player' used as a stand-in for the user.
+
+    The model sometimes writes the literal word "player" instead of the
+    person's name. Substitute it with the display name, but leave compound
+    nouns like "music player" alone, and do nothing when no real name is set.
+    """
+    name = player_display_name(store)
+    source = str(text or '')
+    if not name or name.lower() == 'player':
+        return source
+
+    def repl(match: re.Match[str]) -> str:
+        before = source[: match.start()].rstrip()
+        prev = re.search(r'([A-Za-z]+)[\s-]*$', before)
+        if prev and prev.group(1).lower() in _PLAYER_COMPOUND_PREV:
+            return match.group(0)
+        return name
+
+    return _PLAYER_WORD_RE.sub(repl, source)
 
 
 def score_example(example: dict[str, Any], user_input: str, response_plan: dict[str, Any]) -> tuple[float, dict[str, Any]]:

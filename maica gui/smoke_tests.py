@@ -687,6 +687,36 @@ def test_gui_safe_offscreen() -> None:
     check((GUI_DIR / '.safe_test' / 'maica_cli_test.db').exists(), 'safe test DB was not created')
 
 
+def test_player_substitution() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from example_bank import replace_player_word
+
+    class NamedStore:
+        def get_nicknames(self):
+            return ['babe']
+
+        def get_profile(self):
+            return {'player_name': 'Chopin'}
+
+    class DefaultStore:
+        def get_nicknames(self):
+            return []
+
+        def get_profile(self):
+            return {'player_name': 'player'}
+
+    store = NamedStore()
+    check(replace_player_word('thinking about you, player.', store) == 'thinking about you, babe.',
+          'bare "player" should become the display name')
+    check(replace_player_word("that's the player's choice", store) == "that's the babe's choice",
+          "possessive player's should become the display name")
+    check(replace_player_word('I fixed your music player and the video player.', store)
+          == 'I fixed your music player and the video player.',
+          'compound nouns like "music player" must be left alone')
+    check(replace_player_word('hi player', DefaultStore()) == 'hi player',
+          'no substitution when no real name is set')
+
+
 def test_eval_offline() -> None:
     eval_dir = CLI_DIR / 'eval'
     for path in (str(CLI_DIR), str(eval_dir)):
@@ -736,6 +766,8 @@ def main() -> int:
     print('dual_example_banks ok')
     test_context_translation_cache()
     print('context_translation_cache ok')
+    test_player_substitution()
+    print('player_substitution ok')
     test_eval_offline()
     print('eval_offline ok')
     test_package_audit()

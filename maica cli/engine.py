@@ -12,7 +12,7 @@ from typing import Any, Callable
 from client import OpenAICompatibleClient
 from config_defaults import DEFAULT_CONFIG
 from config_io import load_json
-from example_bank import replace_player_placeholder
+from example_bank import replace_player_placeholder, replace_player_word
 from embedding_index import build_memory_vector_index
 from embedding_service_client import build_service_memory_index
 from mfocus import build_messages, build_spire_messages
@@ -231,6 +231,7 @@ class MaicaEngine:
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
             reply = replace_player_placeholder(parsed["text"], self.store)
+            reply = replace_player_word(reply, self.store)
             reply = apply_style_postprocess(reply, mfocus_plan, self.config)
             reply, rewrite_info = self._enforce_reply_language(reply)
             if rewrite_info:
@@ -327,6 +328,7 @@ class MaicaEngine:
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
             reply = replace_player_placeholder(parsed["text"], self.store)
+            reply = replace_player_word(reply, self.store)
             reply = apply_style_postprocess(reply, mfocus_plan, self.config)
             reply, rewrite_info = self._enforce_reply_language(reply)
             if rewrite_info:
