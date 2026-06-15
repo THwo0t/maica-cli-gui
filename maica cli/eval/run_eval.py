@@ -147,10 +147,19 @@ class _FakeJudgeClient:
         return json.dumps(scores, ensure_ascii=False)
 
 
-def run_scenario(scenario: dict[str, Any], base_config: dict[str, Any], offline: bool) -> dict[str, Any]:
+def run_scenario(
+    scenario: dict[str, Any],
+    base_config: dict[str, Any],
+    offline: bool,
+    gen_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     from engine import MaicaEngine
 
     config = dict(base_config)
+    if gen_override:
+        # Only the reply-generating model changes; the judge stays on base_config
+        # so deepseek-vs-kimi comparisons isolate a single variable.
+        config.update(gen_override)
     config["language"] = "zh" if str(scenario.get("language", "en")).startswith("zh") else "en"
 
     with tempfile.TemporaryDirectory(prefix="maica-eval-") as temp_dir:
@@ -167,7 +176,16 @@ def run_scenario(scenario: dict[str, Any], base_config: dict[str, Any], offline:
                 except Exception:
                     continue
                 engine.store.add_message(str(role), str(content))
-            result = engine.chat(str(scenario.get("user_input", "")))
+            # engine.chat returns {ok: False, ...} on failure without mutating
+            # the store, so retrying on a transient network blip is safe.
+            transient = ("ssl", "eof", "incompleteread", "timed out", "timeout", "connection", "urlopen")
+            user_input = str(scenario.get("user_input", ""))
+            for _ in range(3):
+                result = engine.chat(user_input)
+                if result.get("ok"):
+                    break
+                if not any(token in str(result.get("error", "")).lower() for token in transient):
+                    break
         finally:
             engine.close()
     return result
@@ -292,6 +310,8 @@ def run_evaluation(
     judge_model: str = "",
     save: bool = True,
     progress: Any = None,
+    gen_override: dict[str, Any] | None = None,
+    gen_label: str = "",
 ) -> dict[str, Any]:
     """Run the full evaluation and return summary, records, previous, scorecard.
 
@@ -319,7 +339,7 @@ def run_evaluation(
     for index, scenario in enumerate(scenarios, start=1):
         sid = scenario.get("id", f"scenario_{index}")
         report(f"[{index}/{len(scenarios)}] {sid} ...")
-        result = run_scenario(scenario, base_config, offline)
+        result = run_scenario(scenario, base_config, offline, gen_override)
         if not result.get("ok"):
             report(f"    chat failed: {result.get('error', 'unknown error')}")
             records.append({"scenario": scenario, "reply": "", "result_error": result.get("error", ""), "judgement": {}})
@@ -353,6 +373,7 @@ def run_evaluation(
             "timestamp": stamp,
             "commit": git_commit(),
             "subset": subset,
+            "gen_label": gen_label,
             "summary": summary,
             "records": records,
         }
