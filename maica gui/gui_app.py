@@ -63,6 +63,7 @@ from tts import create_tts, redact_secret  # noqa: E402
 
 PROFILE_FIELDS = ('player_name', 'birthday', 'location', 'nicknames', 'affection')
 LANGUAGE_OPTIONS = ('en', 'zh')
+LLM_CALL_MODES = ('split', 'unified')
 MODE_OPTIONS = ('rule', 'off')
 PLANNER_MODES = ('lite', 'example_only')
 RESPONSE_OUTPUT_MODES = ('dual', 'json', 'legacy_marker')
@@ -346,6 +347,17 @@ class SettingsDialog(QDialog):
         self.api_key = QLineEdit()
         self.api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.api_key.setPlaceholderText('leave blank to keep current key')
+        self.llm_call_mode = QComboBox()
+        self.llm_call_mode.addItems(LLM_CALL_MODES)
+        self.llm_call_mode.setToolTip(
+            'split: casual chat uses the main model above; agent/tool turns use the agent model below.\n'
+            'unified: everything uses the main model above.'
+        )
+        self.agent_api_base = QLineEdit()
+        self.agent_model = QLineEdit()
+        self.agent_api_key = QLineEdit()
+        self.agent_api_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.agent_api_key.setPlaceholderText('leave blank to keep current key')
         self.language = QComboBox()
         self.language.addItems(LANGUAGE_OPTIONS)
         self.temperature = QDoubleSpinBox()
@@ -423,6 +435,10 @@ class SettingsDialog(QDialog):
         form.addRow('API base', self.api_base)
         form.addRow('API key', self.api_key)
         form.addRow('Model', self.model)
+        form.addRow('LLM call mode', self.llm_call_mode)
+        form.addRow('Agent API base', self.agent_api_base)
+        form.addRow('Agent API key', self.agent_api_key)
+        form.addRow('Agent model', self.agent_model)
         form.addRow('Reply language', self.language)
         form.addRow('Temperature', self.temperature)
         form.addRow('Top P', self.top_p)
@@ -493,6 +509,15 @@ class SettingsDialog(QDialog):
         self.api_key.setPlaceholderText(
             'current key saved — leave blank to keep'
             if config.get('api_key')
+            else 'no key set — paste one to enable'
+        )
+        self._set_combo(self.llm_call_mode, str(config.get('llm_call_mode') or 'split'))
+        self.agent_api_base.setText(str(config.get('agent_api_base') or ''))
+        self.agent_model.setText(str(config.get('agent_model') or ''))
+        self.agent_api_key.setText('')
+        self.agent_api_key.setPlaceholderText(
+            'current key saved — leave blank to keep'
+            if config.get('agent_api_key')
             else 'no key set — paste one to enable'
         )
         self._set_combo(self.language, str(config.get('language') or 'en'))
@@ -586,11 +611,17 @@ class SettingsDialog(QDialog):
             'stt_language': self.stt_language.currentText(),
             'stt_timeout': self.stt_timeout.value(),
         }
-        # Only overwrite the saved API key when the user actually typed a new
-        # one; a blank field keeps the existing key.
+        updates['llm_call_mode'] = self.llm_call_mode.currentText()
+        updates['agent_api_base'] = self.agent_api_base.text().strip()
+        updates['agent_model'] = self.agent_model.text().strip()
+        # Only overwrite saved API keys when the user actually typed a new one;
+        # a blank field keeps the existing key.
         new_key = self.api_key.text().strip()
         if new_key:
             updates['api_key'] = new_key
+        new_agent_key = self.agent_api_key.text().strip()
+        if new_agent_key:
+            updates['agent_api_key'] = new_agent_key
         self.owner.config_save_requested.emit(updates)
 
 

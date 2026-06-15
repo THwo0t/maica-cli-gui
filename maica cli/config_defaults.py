@@ -13,6 +13,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "api_key": "",
     "api_key_required": True,
     "model": "deepseek-chat",
+    # LLM call mode: "split" routes agent/tool turns to the agent provider
+    # below while casual chat stays on the main provider; "unified" uses the
+    # main provider for everything.
+    "llm_call_mode": "split",
+    "agent_api_base": "",
+    "agent_api_key": "",
+    "agent_model": "",
     "temperature": 0.75,
     "top_p": 0.95,
     "max_tokens": 900,

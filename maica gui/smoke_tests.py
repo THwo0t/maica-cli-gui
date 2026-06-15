@@ -687,6 +687,29 @@ def test_gui_safe_offscreen() -> None:
     check((GUI_DIR / '.safe_test' / 'maica_cli_test.db').exists(), 'safe test DB was not created')
 
 
+def test_llm_provider_resolution() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from engine import resolve_llm_provider
+
+    config = {
+        'api_base': 'https://api.deepseek.com/v1', 'api_key': 'sk-ds', 'model': 'deepseek-chat',
+        'llm_call_mode': 'split',
+        'agent_api_base': 'https://openrouter.ai/api/v1', 'agent_api_key': 'sk-or', 'agent_model': 'moonshotai/kimi-k2.6',
+    }
+    chat = resolve_llm_provider(config, 'chat')
+    check(chat['model'] == 'deepseek-chat', 'chat role must use the main model')
+    agent = resolve_llm_provider(config, 'agent')
+    check(agent['model'] == 'moonshotai/kimi-k2.6', 'split agent role must use the agent model')
+
+    unified = dict(config, llm_call_mode='unified')
+    check(resolve_llm_provider(unified, 'agent')['model'] == 'deepseek-chat',
+          'unified mode must use the main model for every role')
+
+    no_agent = dict(config, agent_api_base='', agent_model='')
+    check(resolve_llm_provider(no_agent, 'agent')['model'] == 'deepseek-chat',
+          'split agent role must fall back to main when agent provider is unset')
+
+
 def test_settings_api_key() -> None:
     script = (
         "import sys;"
@@ -697,17 +720,20 @@ def test_settings_api_key() -> None:
         "app=QApplication([]);"
         "owner=type('O',(QWidget,),{'config_save_requested':Signal(dict)})();"
         "dlg=gui_app.SettingsDialog(owner);"
-        "dlg.render({'api_base':'b','model':'m','api_key':'sk-secret'});"
+        "dlg.render({'api_base':'b','model':'m','api_key':'sk-secret','llm_call_mode':'split','agent_api_key':'sk-agent'});"
         "assert dlg.api_key.echoMode()==QLineEdit.EchoMode.Password,'key field must be masked';"
-        "assert dlg.api_key.text()=='','stored key must not be shown';"
+        "assert dlg.agent_api_key.echoMode()==QLineEdit.EchoMode.Password,'agent key field must be masked';"
+        "assert dlg.api_key.text()=='' and dlg.agent_api_key.text()=='','stored keys must not be shown';"
         "cap={};"
         "owner.config_save_requested.connect(lambda u: cap.update(u));"
         "dlg.save();"
-        "assert 'api_key' not in cap,'blank key must not be sent (keeps existing)';"
+        "assert 'api_key' not in cap and 'agent_api_key' not in cap,'blank keys must not be sent (keep existing)';"
+        "assert cap.get('llm_call_mode')=='split','call mode must be saved';"
         "cap.clear();"
-        "dlg.api_key.setText(' sk-new ');"
+        "dlg.api_key.setText(' sk-new '); dlg.agent_api_key.setText(' sk-agent2 ');"
         "dlg.save();"
         "assert cap.get('api_key')=='sk-new','typed key must be sent, stripped';"
+        "assert cap.get('agent_api_key')=='sk-agent2','typed agent key must be sent, stripped';"
         "print('OK')"
     )
     env = os.environ.copy()
@@ -805,6 +831,8 @@ def main() -> int:
     print('context_translation_cache ok')
     test_player_substitution()
     print('player_substitution ok')
+    test_llm_provider_resolution()
+    print('llm_provider_resolution ok')
     test_settings_api_key()
     print('settings_api_key ok')
     test_eval_offline()

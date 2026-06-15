@@ -119,6 +119,32 @@ def normalize_runtime_config(config: dict[str, Any]) -> dict[str, Any]:
     return config
 
 
+def resolve_llm_provider(config: dict[str, Any], role: str = "chat") -> dict[str, Any]:
+    """Pick the api_base/api_key/model for a role ('chat' or 'agent').
+
+    In "split" mode an 'agent' role uses the agent_* provider when it is
+    configured (base + model present); casual chat and "unified" mode always
+    use the main provider. This is the seam the future agent loop uses to send
+    tool-using turns to a stronger model while keeping chat cheap and fast.
+    """
+    main = {
+        "api_base": str(config.get("api_base") or ""),
+        "api_key": str(config.get("api_key") or ""),
+        "model": str(config.get("model") or ""),
+    }
+    mode = str(config.get("llm_call_mode") or "split").lower()
+    if role != "agent" or mode == "unified":
+        return main
+    agent = {
+        "api_base": str(config.get("agent_api_base") or ""),
+        "api_key": str(config.get("agent_api_key") or ""),
+        "model": str(config.get("agent_model") or ""),
+    }
+    if agent["api_base"] and agent["model"]:
+        return agent
+    return main
+
+
 def _reply_language_mismatch(text: str, language: str) -> bool:
     text = str(text or '').strip()
     if not text:
