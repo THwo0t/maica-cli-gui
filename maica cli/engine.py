@@ -195,13 +195,6 @@ class MaicaEngine:
         self.client = OpenAICompatibleClient(self.config)
         # Externally registered agent tools (pet body, future MCP, etc.).
         self._extra_tools: dict[str, dict[str, Any]] = {}
-        if self.config.get("file_tools_enabled"):
-            try:
-                from file_tools import register_file_tools
-
-                register_file_tools(self)
-            except Exception:
-                pass
         if self.owns_store and self.config.get("auto_backup_enabled", True):
             try:
                 self.store.backup_database(keep=int(self.config.get("auto_backup_keep", 8)))
@@ -293,6 +286,15 @@ class MaicaEngine:
                 "run": self._tool_check_our_closeness,
             },
         }
+        # File tools are built fresh from the live config so the GUI can toggle
+        # them on/off without rebuilding the engine.
+        if self.config.get("file_tools_enabled"):
+            try:
+                from file_tools import build_file_tools
+
+                registry.update(build_file_tools(self.config))
+            except Exception:
+                pass
         registry.update(self._extra_tools)
         return registry
 

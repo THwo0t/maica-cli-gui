@@ -36,11 +36,16 @@ def _safe_name(title: str) -> str:
     return name[:60].strip().replace(' ', '_')
 
 
-def register_file_tools(engine: Any) -> None:
-    config = engine.config
+def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """Return {name: {schema, run}} for the file tools, bound to this config.
+
+    Built fresh from the live config so toggling file_tools_enabled adds/removes
+    them cleanly (no persistent registration to undo).
+    """
+    tools: dict[str, dict[str, Any]] = {}
 
     def tool(name: str, desc: str, params: dict[str, Any], run: Any) -> None:
-        engine.register_tool(name, {'type': 'function', 'function': {'name': name, 'description': desc, 'parameters': params}}, run)
+        tools[name] = {'schema': {'type': 'function', 'function': {'name': name, 'description': desc, 'parameters': params}}, 'run': run}
 
     # ---- B: Monika's own space (~/Monika) -------------------------------
     def list_my_space(args: dict[str, Any]) -> dict[str, Any]:
@@ -157,3 +162,4 @@ def register_file_tools(engine: Any) -> None:
          _str_param('absolute path to a file in an allow-listed folder'), read_user_file)
     tool('list_user_dir', "List a user folder (only inside folders they have allow-listed).",
          _str_param('absolute path to an allow-listed folder'), list_user_dir)
+    return tools

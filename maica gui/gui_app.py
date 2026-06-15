@@ -367,6 +367,13 @@ class SettingsDialog(QDialog):
         self.agent_api_key = QLineEdit()
         self.agent_api_key.setEchoMode(QLineEdit.EchoMode.Password)
         self.agent_api_key.setPlaceholderText('leave blank to keep current key')
+        self.agent_tools_enabled = QCheckBox('Enable agent tools (let her act, not just talk)')
+        self.file_tools_enabled = QCheckBox('Enable file tools (her ~/Monika space + your allow-listed files)')
+        self.sandbox_root = QLineEdit()
+        self.sandbox_root.setPlaceholderText('empty = ~/Monika')
+        self.sandbox_allowlist = QPlainTextEdit()
+        self.sandbox_allowlist.setPlaceholderText('Folders she may READ, one absolute path per line (empty = none)')
+        self.sandbox_allowlist.setMaximumHeight(70)
         self.language = QComboBox()
         self.language.addItems(LANGUAGE_OPTIONS)
         self.temperature = QDoubleSpinBox()
@@ -448,6 +455,10 @@ class SettingsDialog(QDialog):
         form.addRow('Agent API base', self.agent_api_base)
         form.addRow('Agent API key', self.agent_api_key)
         form.addRow('Agent model', self.agent_model)
+        form.addRow('', self.agent_tools_enabled)
+        form.addRow('', self.file_tools_enabled)
+        form.addRow('Sandbox folder', self.sandbox_root)
+        form.addRow('Readable folders', self.sandbox_allowlist)
         form.addRow('Reply language', self.language)
         form.addRow('Temperature', self.temperature)
         form.addRow('Top P', self.top_p)
@@ -529,6 +540,11 @@ class SettingsDialog(QDialog):
             if config.get('agent_api_key')
             else 'no key set — paste one to enable'
         )
+        self.agent_tools_enabled.setChecked(bool(config.get('agent_tools_enabled', False)))
+        self.file_tools_enabled.setChecked(bool(config.get('file_tools_enabled', False)))
+        self.sandbox_root.setText(str(config.get('sandbox_root') or ''))
+        allow = config.get('sandbox_readonly_allowlist') or []
+        self.sandbox_allowlist.setPlainText('\n'.join(str(x) for x in allow) if isinstance(allow, list) else str(allow))
         self._set_combo(self.language, str(config.get('language') or 'en'))
         self.temperature.setValue(float(config.get('temperature') or 0.22))
         self.top_p.setValue(float(config.get('top_p') or 0.7))
@@ -623,6 +639,12 @@ class SettingsDialog(QDialog):
         updates['llm_call_mode'] = self.llm_call_mode.currentText()
         updates['agent_api_base'] = self.agent_api_base.text().strip()
         updates['agent_model'] = self.agent_model.text().strip()
+        updates['agent_tools_enabled'] = self.agent_tools_enabled.isChecked()
+        updates['file_tools_enabled'] = self.file_tools_enabled.isChecked()
+        updates['sandbox_root'] = self.sandbox_root.text().strip()
+        updates['sandbox_readonly_allowlist'] = [
+            line.strip() for line in self.sandbox_allowlist.toPlainText().splitlines() if line.strip()
+        ]
         # Only overwrite saved API keys when the user actually typed a new one;
         # a blank field keeps the existing key.
         new_key = self.api_key.text().strip()
@@ -1008,6 +1030,7 @@ class MainWindow(QMainWindow):
         self.worker.stream_chunk.connect(self._handle_stream_chunk)
         self.worker.config_ready.connect(self._handle_config_ready)
         self.worker.data_ready.connect(self._handle_data_ready)
+        self.worker.pet_action.connect(self._apply_pet_action)
         self.chat_requested.connect(self.worker.chat)
         self.spire_requested.connect(self.worker.spire)
         self.shutdown_requested.connect(self.worker.shutdown)
@@ -1075,8 +1098,9 @@ class MainWindow(QMainWindow):
 
         self.input_box = QTextEdit()
         self.input_box.setObjectName('inputBox')
-        self.input_box.setAttribute(Qt.WidgetAttribute.WA_InputMethodEnabled, True)
-        self.input_box.setInputMethodHints(Qt.InputMethodHint.ImhNone)
+        # Note: do NOT set WA_InputMethodEnabled / setInputMethodHints here. Qt
+        # enables IME on QTextEdit by default; setting these explicitly broke
+        # CJK input method activation (e.g. fcitx5) — keep Qt's defaults.
         self.input_box.setPlaceholderText('Type a message for Monika. Ctrl+Enter to send.')
         self.input_box.setMaximumHeight(92)
         self.input_box.installEventFilter(self)
@@ -1375,6 +1399,20 @@ class MainWindow(QMainWindow):
             self.pet_window.hide()
         else:
             self.pet_window.show_normal()
+
+    def _apply_pet_action(self, action: str, arg: str) -> None:
+        # A body tool fired during an agent turn; reflect it on the hosted pet.
+        pet = self.pet_window
+        if pet is None or not pet.isVisible():
+            return
+        if action == 'expression':
+            pet.apply_expression(arg)
+        elif action == 'gesture':
+            pet.do_gesture(arg)
+        elif action == 'pop':
+            pet.show_normal()
+        elif action == 'nudge':
+            pet.do_nudge()
 
     def _on_pet_interaction(self, _kind: str) -> None:
         # Clicking the pet asks Monika for a proactive line (without touching the

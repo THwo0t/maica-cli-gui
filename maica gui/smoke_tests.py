@@ -881,9 +881,13 @@ def test_settings_api_key() -> None:
         "assert cap.get('llm_call_mode')=='split','call mode must be saved';"
         "cap.clear();"
         "dlg.api_key.setText(' sk-new '); dlg.agent_api_key.setText(' sk-agent2 ');"
+        "dlg.agent_tools_enabled.setChecked(True); dlg.file_tools_enabled.setChecked(True);"
+        "dlg.sandbox_allowlist.setPlainText('/a\\n/b');"
         "dlg.save();"
         "assert cap.get('api_key')=='sk-new','typed key must be sent, stripped';"
         "assert cap.get('agent_api_key')=='sk-agent2','typed agent key must be sent, stripped';"
+        "assert cap.get('agent_tools_enabled') is True and cap.get('file_tools_enabled') is True,'tool enables must be saved';"
+        "assert cap.get('sandbox_readonly_allowlist')==['/a','/b'],'allowlist must parse to a list';"
         "print('OK')"
     )
     env = os.environ.copy()

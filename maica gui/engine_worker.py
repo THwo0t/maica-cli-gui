@@ -38,6 +38,7 @@ class GuiEngineWorker(QObject):
     stream_started = Signal(dict)
     stream_chunk = Signal(str)
     data_ready = Signal(dict)
+    pet_action = Signal(str, str)  # (action, arg) for the desktop pet body
 
     def __init__(
         self,
@@ -73,12 +74,37 @@ class GuiEngineWorker(QObject):
                 app_dir=self.app_dir,
             )
             self._apply_gui_safety_overrides()
+            self._register_pet_body_tools()
             self._sync_embedding_service()
             self.config_ready.emit(dict(self.engine.config))
             self.ready.emit({'ok': True, 'error': ''})
             self._prewarm_embeddings_if_needed()
         except Exception as exc:
             self.ready.emit({'ok': False, 'error': self._safe_error_text(exc, with_traceback=True)})
+
+    def _register_pet_body_tools(self) -> None:
+        # Body tools live on the GUI's single engine; their run() (called in
+        # this worker thread during the agent loop) emits pet_action, which the
+        # GUI applies to the hosted pet on the UI thread. Harmless no-op when no
+        # pet is open.
+        if self.engine is None:
+            return
+        empty = {'type': 'object', 'properties': {}}
+
+        def reg(name: str, desc: str, params: dict[str, Any], action: str, arg_key: str | None) -> None:
+            def run(args: dict[str, Any], _action: str = action, _key: str = arg_key) -> dict[str, Any]:
+                self.pet_action.emit(_action, str(args.get(_key) or '') if _key else '')
+                return {'ok': True}
+            self.engine.register_tool(name, {'type': 'function', 'function': {'name': name, 'description': desc, 'parameters': params}}, run)
+
+        reg('set_expression', 'Change your facial expression on the desktop pet to show how you feel.',
+            {'type': 'object', 'properties': {'expression': {'type': 'string'}}, 'required': ['expression']},
+            'expression', 'expression')
+        reg('do_gesture', 'Play a small body gesture on the desktop pet (wave, jump, pout, nod).',
+            {'type': 'object', 'properties': {'gesture': {'type': 'string'}}, 'required': ['gesture']},
+            'gesture', 'gesture')
+        reg('pop_to_front', "Bring your desktop pet to the front to get the user's attention.", empty, 'pop', None)
+        reg('nudge', 'Give a small playful bounce on the desktop pet.', empty, 'nudge', None)
 
     def _apply_gui_safety_overrides(self) -> None:
         if self.engine is None:
@@ -523,6 +549,10 @@ class GuiEngineWorker(QObject):
             'agent_api_base': str,
             'agent_api_key': str,
             'agent_model': str,
+            'agent_tools_enabled': bool,
+            'file_tools_enabled': bool,
+            'sandbox_root': str,
+            'sandbox_readonly_allowlist': list,
             'language': str,
             'temperature': float,
             'top_p': float,
@@ -582,6 +612,11 @@ class GuiEngineWorker(QObject):
                     value = int(value)
                 elif caster is float:
                     value = float(value)
+                elif caster is list:
+                    if isinstance(value, list):
+                        value = [str(item).strip() for item in value if str(item).strip()]
+                    else:
+                        value = [part.strip() for part in str(value).split(',') if part.strip()]
                 else:
                     value = str(value).strip()
             except (TypeError, ValueError):
