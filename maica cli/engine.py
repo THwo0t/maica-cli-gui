@@ -193,6 +193,8 @@ class MaicaEngine:
         self.store = store if store is not None else Store(self.db_path)
         self.owns_store = store is None
         self.client = OpenAICompatibleClient(self.config)
+        # Externally registered agent tools (pet body, future MCP, etc.).
+        self._extra_tools: dict[str, dict[str, Any]] = {}
         if self.owns_store and self.config.get("auto_backup_enabled", True):
             try:
                 self.store.backup_database(keep=int(self.config.get("auto_backup_keep", 8)))
@@ -252,13 +254,22 @@ class MaicaEngine:
     # ------------------------------------------------------------------
     # Agentic tool calling (P1 foundation)
     # ------------------------------------------------------------------
+    def register_tool(self, name: str, schema: dict[str, Any], run: Callable[[dict[str, Any]], Any]) -> None:
+        """Register an external agent tool (pet body actions, MCP bridges, ...).
+
+        ``schema`` is an OpenAI tool definition; ``run`` takes the parsed args
+        dict and returns a JSON-serializable result. This is the seam later
+        phases use to give Monika new capabilities without touching engine.py.
+        """
+        self._extra_tools[name] = {"schema": schema, "run": run}
+
     def _tool_registry(self) -> dict[str, dict[str, Any]]:
-        """Map tool name -> {schema, run}. Add new capabilities here.
+        """Map tool name -> {schema, run}: built-in tools plus registered ones.
 
         P1 ships one read-only, no-filesystem demo tool to exercise the loop.
         File/sandbox/vision tools come in later phases on top of this seam.
         """
-        return {
+        registry: dict[str, dict[str, Any]] = {
             "check_our_closeness": {
                 "schema": {
                     "type": "function",
@@ -275,6 +286,8 @@ class MaicaEngine:
                 "run": self._tool_check_our_closeness,
             },
         }
+        registry.update(self._extra_tools)
+        return registry
 
     def _tool_check_our_closeness(self, _args: dict[str, Any]) -> dict[str, Any]:
         affection = self.store.affection()
@@ -460,7 +473,12 @@ class MaicaEngine:
                 spire_topic["topic_id"],
                 spire_topic.get("wiki", {}),
             )
-            raw_reply, usage, streamed = self._call_chat(messages, "spire", stream_callback)
+            if self.config.get("agent_tools_enabled"):
+                raw_reply, usage, agent_trace = self._run_agent_loop(messages)
+                streamed = False
+                mfocus_plan["agent_trace"] = agent_trace
+            else:
+                raw_reply, usage, streamed = self._call_chat(messages, "spire", stream_callback)
             parsed = parse_assistant_response(raw_reply)
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
