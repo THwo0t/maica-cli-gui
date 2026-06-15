@@ -12,6 +12,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import math
+import os
 import random
 import sys
 from pathlib import Path
@@ -303,6 +304,74 @@ class SettingsDialog(QDialog):
         self.accept()
 
 
+def install_kwin_keep_above_rule(window_title: str) -> tuple[bool, str]:
+    """Add/refresh a KWin 'keep above (force)' window rule for the pet.
+
+    Wayland forbids an app from self-asserting always-on-top, so on KDE the
+    reliable way is a KWin window rule. This writes one to kwinrulesrc and asks
+    KWin to reload. Idempotent (no-op if already present). KDE/Linux only.
+    """
+    if not sys.platform.startswith('linux'):
+        return False, 'Keep-above rule is only used on Linux (KDE).'
+    if 'KDE' not in os.environ.get('XDG_CURRENT_DESKTOP', '').upper():
+        return False, 'This helper targets KDE/KWin; set always-on-top in your own WM.'
+
+    import configparser
+    import subprocess
+
+    rc_path = Path.home() / '.config' / 'kwinrulesrc'
+    group = 'monika-pet-keep-above'
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    parser.optionxform = str
+    if rc_path.exists():
+        try:
+            parser.read(rc_path, encoding='utf-8')
+        except Exception:
+            pass
+
+    rules = [r for r in (parser['General'].get('rules', '') if parser.has_section('General') else '').split(',') if r]
+    already = (
+        group in rules
+        and parser.has_section(group)
+        and parser[group].get('above') == 'true'
+        and parser[group].get('title') == window_title
+    )
+    if already:
+        return True, 'Already pinned above other windows.'
+
+    if not parser.has_section('General'):
+        parser.add_section('General')
+    if group not in rules:
+        rules.append(group)
+    parser['General']['rules'] = ','.join(rules)
+    parser['General']['count'] = str(len(rules))
+    if not parser.has_section(group):
+        parser.add_section(group)
+    parser[group].update({
+        'Description': 'Monika desktop pet - keep above',
+        'title': window_title,
+        'titlematch': '2',   # substring match
+        'above': 'true',
+        'aboverule': '2',    # 2 = Force
+    })
+
+    rc_path.parent.mkdir(parents=True, exist_ok=True)
+    with rc_path.open('w', encoding='utf-8') as handle:
+        parser.write(handle, space_around_delimiters=False)
+
+    for cmd in (
+        ['qdbus6', 'org.kde.KWin', '/KWin', 'reconfigure'],
+        ['qdbus', 'org.kde.KWin', '/KWin', 'reconfigure'],
+        ['dbus-send', '--session', '--type=method_call', '--dest=org.kde.KWin', '/KWin', 'org.kde.KWin.reconfigure'],
+    ):
+        try:
+            if subprocess.run(cmd, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode == 0:
+                return True, 'Pinned above other windows.'
+        except Exception:
+            continue
+    return True, 'Rule saved; it applies after the next KWin reload or login.'
+
+
 class PetBrain(QObject):
     """Bridge the pet to the real MaicaEngine on a background thread.
 
@@ -458,6 +527,26 @@ class PetWindow(QWidget):
         self.restore_or_default_position()
         self.startup_greeting()
         self.show()
+        self._maybe_autopin_kde()
+
+    def _maybe_autopin_kde(self) -> None:
+        # On KDE Wayland the window flag can't force stay-on-top; install a KWin
+        # rule once (idempotent). X11/Windows/macOS rely on the window flag.
+        if not self.config.get('always_on_top', True):
+            return
+        app = QApplication.instance()
+        if not (app and app.platformName().lower().startswith('wayland')):
+            return
+        if 'KDE' not in os.environ.get('XDG_CURRENT_DESKTOP', '').upper():
+            return
+        try:
+            install_kwin_keep_above_rule(self.windowTitle())
+        except Exception:
+            pass
+
+    def pin_above_kde(self) -> None:
+        ok, message = install_kwin_keep_above_rule(self.windowTitle())
+        self.say(message, 'smile' if ok else 'concerned', seconds=6)
 
     def apply_window_flags(self) -> None:
         flags = Qt.WindowType.FramelessWindowHint
@@ -847,6 +936,7 @@ class PetWindow(QWidget):
             opacity_menu.addAction(label, lambda checked=False, opacity=value: self.set_opacity(opacity))
         menu.addAction('Settings...', self.open_settings)
         menu.addAction('Hide bubble', self.hide_bubble)
+        menu.addAction('Pin above other windows (KDE)', self.pin_above_kde)
         menu.addAction('Reset position', self.move_to_default_position)
         menu.addSeparator()
         menu.addAction('About', self.show_about)
