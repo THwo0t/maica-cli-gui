@@ -860,6 +860,25 @@ def test_llm_provider_resolution() -> None:
           'split agent role must fall back to main when agent provider is unset')
 
 
+def test_safe_config_exposes_settings() -> None:
+    sys.path.insert(0, str(GUI_DIR))
+    sys.path.insert(0, str(CLI_DIR))
+    from engine_worker import GuiEngineWorker
+
+    worker = GuiEngineWorker()
+    safe = worker._safe_config({
+        'agent_tools_enabled': True, 'file_tools_enabled': True, 'sandbox_root': '/x',
+        'sandbox_readonly_allowlist': ['/a'], 'llm_call_mode': 'split',
+        'agent_api_base': 'b', 'agent_model': 'm', 'agent_api_key': 'sk-secret',
+    })
+    # Settings that round-trip to the GUI must be in the safe snapshot, or the
+    # dialog re-renders them to defaults after Save (the checkbox-reverts bug).
+    for key in ('agent_tools_enabled', 'file_tools_enabled', 'sandbox_root',
+                'sandbox_readonly_allowlist', 'llm_call_mode', 'agent_api_base', 'agent_model'):
+        check(key in safe, f'safe config must expose settings key: {key}')
+    check(safe.get('agent_api_key') == '<hidden>', 'agent API key must stay hidden in snapshots')
+
+
 def test_settings_api_key() -> None:
     script = (
         "import sys;"
@@ -993,6 +1012,8 @@ def main() -> int:
     print('file_tools ok')
     test_engine_agent_loop()
     print('engine_agent_loop ok')
+    test_safe_config_exposes_settings()
+    print('safe_config_exposes_settings ok')
     test_settings_api_key()
     print('settings_api_key ok')
     test_eval_offline()

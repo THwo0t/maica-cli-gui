@@ -481,6 +481,13 @@ class GuiEngineWorker(QObject):
         public_keys = {
             'api_base',
             'model',
+            'llm_call_mode',
+            'agent_api_base',
+            'agent_model',
+            'agent_tools_enabled',
+            'file_tools_enabled',
+            'sandbox_root',
+            'sandbox_readonly_allowlist',
             'language',
             'temperature',
             'top_p',
