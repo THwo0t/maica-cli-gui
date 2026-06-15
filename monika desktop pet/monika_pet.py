@@ -420,6 +420,10 @@ class PetWindow(QWidget):
         self.last_tick = dt.datetime.now()
         self.tray: QSystemTrayIcon | None = None
 
+        # Stable identity so a KWin "Keep above" window rule can target the pet
+        # (the only reliable way to stay on top on Wayland).
+        self.setWindowTitle('Monika Desktop Pet')
+        self.setObjectName('MonikaDesktopPet')
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setMouseTracking(True)
         self.refresh_cursor()
