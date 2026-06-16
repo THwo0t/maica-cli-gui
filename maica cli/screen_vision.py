@@ -5,9 +5,12 @@ Privacy notes: this is off by default, captures only the *active window* (not
 the whole screen where the platform allows), and the image is sent to a vision
 model in the cloud. Use only with explicit opt-in.
 
-Capture is platform-aware. KDE Wayland (the primary target) uses Spectacle's
-background active-window mode; other platforms are best-effort and may return
-None until their capture path is wired.
+Capture is platform-aware and dependency-free (OS-native tools only):
+- Linux/KDE Wayland: Spectacle background active-window mode (GNOME/grim fallbacks).
+- macOS: AppleScript front-window bounds + ``screencapture -R`` (needs Accessibility
+  + Screen Recording permission; falls back to full screen).
+- Windows: a PowerShell + Win32 ``GetForegroundWindow`` + ``CopyFromScreen`` capture.
+Unknown platforms return None so the tool reports "not available yet".
 """
 
 from __future__ import annotations
@@ -31,33 +34,93 @@ DEFAULT_PROMPT = (
 )
 
 
-def _capture_command(out: Path) -> list[str] | None:
-    if sys.platform.startswith("linux"):
-        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
-        if "KDE" in desktop and shutil.which("spectacle"):
-            return ["spectacle", "-a", "-b", "-n", "-o", str(out)]  # active window, background
-        if shutil.which("gnome-screenshot"):
-            return ["gnome-screenshot", "-w", "-f", str(out)]  # active window
-        if shutil.which("grim"):
-            return ["grim", str(out)]  # wlroots: whole output (no active-window granularity)
-        return None
-    # macOS / Windows active-window capture without a user click needs more work;
-    # wired later. Returns None so the tool reports "not available yet".
-    return None
+def _run(cmd: list[str], timeout: int = 12) -> None:
+    subprocess.run(cmd, timeout=timeout, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def _capture_linux(out: Path) -> bool:
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").upper()
+    if "KDE" in desktop and shutil.which("spectacle"):
+        _run(["spectacle", "-a", "-b", "-n", "-o", str(out)])  # active window, background
+    elif shutil.which("gnome-screenshot"):
+        _run(["gnome-screenshot", "-w", "-f", str(out)])  # active window
+    elif shutil.which("grim"):
+        _run(["grim", str(out)])  # wlroots: whole output (no active-window granularity)
+    else:
+        return False
+    return out.exists()
+
+
+def _capture_macos(out: Path) -> bool:
+    # Front window bounds via AppleScript (needs Accessibility permission), then
+    # screencapture of that region (needs Screen Recording permission). Falls
+    # back to the full screen if the bounds can't be read.
+    script = (
+        'tell application "System Events" to tell '
+        '(first application process whose frontmost is true) to get {position, size} of front window'
+    )
+    rect: list[int] = []
+    try:
+        result = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=8)
+        rect = [int(float(part)) for part in result.stdout.replace(",", " ").split()]
+    except Exception:
+        rect = []
+    if len(rect) == 4 and rect[2] > 0 and rect[3] > 0:
+        _run(["screencapture", "-R", f"{rect[0]},{rect[1]},{rect[2]},{rect[3]}", "-o", "-x", str(out)])
+    else:
+        _run(["screencapture", "-o", "-x", str(out)])
+    return out.exists()
+
+
+_WINDOWS_CAPTURE_PS = r"""
+Add-Type -ReferencedAssemblies System.Drawing -TypeDefinition @"
+using System;using System.Runtime.InteropServices;
+public class Win {
+ [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+ [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+ public struct RECT { public int L; public int T; public int R; public int B; }
+}
+"@
+$h = [Win]::GetForegroundWindow()
+$r = New-Object Win+RECT
+[void][Win]::GetWindowRect($h, [ref]$r)
+$w = $r.R - $r.L; $ht = $r.B - $r.T
+if ($w -le 0 -or $ht -le 0) { exit 1 }
+$bmp = New-Object System.Drawing.Bitmap $w, $ht
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.CopyFromScreen($r.L, $r.T, 0, 0, $bmp.Size)
+$bmp.Save("__OUT__", [System.Drawing.Imaging.ImageFormat]::Png)
+"""
+
+
+def _capture_windows(out: Path) -> bool:
+    script = _WINDOWS_CAPTURE_PS.replace("__OUT__", str(out).replace("\\", "\\\\"))
+    ps1 = Path(tempfile.gettempdir()) / f"maica_vision_{os.getpid()}.ps1"
+    try:
+        ps1.write_text(script, encoding="utf-8")
+        _run(["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(ps1)])
+    finally:
+        try:
+            ps1.unlink()
+        except Exception:
+            pass
+    return out.exists()
 
 
 def capture_active_window(out_path: str | Path | None = None) -> Path | None:
     out = Path(out_path) if out_path else Path(tempfile.gettempdir()) / f"maica_vision_{os.getpid()}.png"
-    cmd = _capture_command(out)
-    if cmd is None:
-        return None
     try:
-        subprocess.run(cmd, timeout=12, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        if sys.platform.startswith("linux"):
+            ok = _capture_linux(out)
+        elif sys.platform == "darwin":
+            ok = _capture_macos(out)
+        elif sys.platform == "win32":
+            ok = _capture_windows(out)
+        else:
+            ok = False
     except Exception:
-        return None
-    if out.exists() and out.stat().st_size > 0:
-        return out
-    return None
+        ok = False
+    return out if (ok and out.exists() and out.stat().st_size > 0) else None
 
 
 def vision_provider(config: dict[str, Any]) -> dict[str, Any]:
