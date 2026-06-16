@@ -103,6 +103,25 @@ def choose_spire_topic(
             'wiki': wiki_topic or {},
         }
 
+    # Self-directed idle: occasionally Monika spends her quiet time doing
+    # something in her own space (diary / a letter) rather than just talking.
+    # Requires both tool gates plus the idle-self-action opt-in.
+    if (
+        config.get('idle_self_actions_enabled')
+        and config.get('agent_tools_enabled')
+        and config.get('file_tools_enabled')
+    ):
+        prob = max(0.0, min(1.0, float(config.get('idle_self_action_probability', 0.35) or 0.35)))
+        if rng.random() < prob:
+            return {
+                'mode': 'self_action',
+                'topic_id': 'self_action',
+                'hint': '',
+                'reflective': False,
+                'recent_avoided': recent,
+                'wiki': {},
+            }
+
     wiki_topic = None
     if config.get('spire_wikipedia_enabled', True):
         wiki_probability = max(0.0, min(1.0, float(config.get('spire_wikipedia_probability', 0.35) or 0.35)))

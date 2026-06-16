@@ -427,6 +427,7 @@ class SettingsDialog(QDialog):
         self.gui_idle_spire_enabled = QCheckBox('Enable idle proactive talk')
         self.gui_idle_spire_minutes = QSpinBox()
         self.gui_idle_spire_minutes.setRange(1, 240)
+        self.idle_self_actions_enabled = QCheckBox('Let her do things on her own when idle (diary/letters; needs agent + file tools)')
         self.gui_startup_greeting_enabled = QCheckBox('Show startup greeting')
         self.auto_memory_summary_enabled = QCheckBox('Enable automatic memory summaries')
         self.auto_memory_summary_turns = QSpinBox()
@@ -486,6 +487,7 @@ class SettingsDialog(QDialog):
         form.addRow('Background mode', self.gui_background_mode)
         form.addRow('', self.gui_idle_spire_enabled)
         form.addRow('Idle minutes', self.gui_idle_spire_minutes)
+        form.addRow('', self.idle_self_actions_enabled)
         form.addRow('', self.gui_startup_greeting_enabled)
         form.addRow('', self.auto_memory_summary_enabled)
         form.addRow('Summary turns', self.auto_memory_summary_turns)
@@ -572,6 +574,7 @@ class SettingsDialog(QDialog):
         self._set_combo(self.gui_background_mode, str(config.get('gui_background_mode') or 'auto'))
         self.gui_idle_spire_enabled.setChecked(bool(config.get('gui_idle_spire_enabled', False)))
         self.gui_idle_spire_minutes.setValue(int(config.get('gui_idle_spire_minutes') or 12))
+        self.idle_self_actions_enabled.setChecked(bool(config.get('idle_self_actions_enabled', False)))
         self.gui_startup_greeting_enabled.setChecked(bool(config.get('gui_startup_greeting_enabled', True)))
         self.auto_memory_summary_enabled.setChecked(bool(config.get('auto_memory_summary_enabled', False)))
         self.auto_memory_summary_turns.setValue(int(config.get('auto_memory_summary_turns') or 24))
@@ -623,6 +626,7 @@ class SettingsDialog(QDialog):
             'gui_background_mode': self.gui_background_mode.currentText(),
             'gui_idle_spire_enabled': self.gui_idle_spire_enabled.isChecked(),
             'gui_idle_spire_minutes': self.gui_idle_spire_minutes.value(),
+            'idle_self_actions_enabled': self.idle_self_actions_enabled.isChecked(),
             'gui_startup_greeting_enabled': self.gui_startup_greeting_enabled.isChecked(),
             'auto_memory_summary_enabled': self.auto_memory_summary_enabled.isChecked(),
             'auto_memory_summary_turns': self.auto_memory_summary_turns.value(),

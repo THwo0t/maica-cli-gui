@@ -774,6 +774,44 @@ def test_file_tools() -> None:
             engine.close()
 
 
+def test_idle_self_action() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from spire_topics import choose_spire_topic
+    from mfocus import build_spire_messages
+    from store import Store
+
+    class RNG:
+        def random(self) -> float:
+            return 0.0  # always under the probability -> pick self_action
+
+        def choice(self, seq):
+            return seq[0]
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        store = Store(Path(temp_dir) / 's.db')
+        config = dict(DEFAULT_CONFIG)
+        config.update({
+            'idle_self_actions_enabled': True, 'agent_tools_enabled': True, 'file_tools_enabled': True,
+            'idle_self_action_probability': 0.5, 'spire_wikipedia_enabled': False,
+            'language': 'en', 'response_planner_enabled': False, 'style_enabled': False,
+            'embedding_enabled': False, 'memory_embedding_enabled': False, 'embedding_service_enabled': False,
+        })
+        try:
+            topic = choose_spire_topic(store, config, '', rng=RNG())
+            check(topic['mode'] == 'self_action', 'idle should choose self_action when enabled')
+            # Gate: without the opt-in it must NOT choose self_action.
+            off = dict(config, idle_self_actions_enabled=False)
+            check(choose_spire_topic(store, off, '', rng=RNG())['mode'] != 'self_action',
+                  'self_action must be gated by the opt-in')
+            messages, _plan = build_spire_messages(store, config, None, topic_hint='', topic_mode='self_action', topic_id='self_action')
+            all_text = ' '.join(str(m.get('content') or '') for m in messages)
+            check('diary' in all_text and 'letter' in all_text,
+                  'self_action prompt should invite writing a diary or a letter')
+        finally:
+            store.close()
+
+
 def test_engine_agent_loop() -> None:
     sys.path.insert(0, str(CLI_DIR))
     from config_defaults import DEFAULT_CONFIG
@@ -1012,6 +1050,8 @@ def main() -> int:
     print('file_tools ok')
     test_engine_agent_loop()
     print('engine_agent_loop ok')
+    test_idle_self_action()
+    print('idle_self_action ok')
     test_safe_config_exposes_settings()
     print('safe_config_exposes_settings ok')
     test_settings_api_key()

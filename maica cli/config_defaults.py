@@ -35,6 +35,11 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "file_tools_enabled": False,
     "sandbox_root": "",
     "sandbox_readonly_allowlist": [],
+    # Self-directed idle (P4): when idle and tools are on, Monika may use her
+    # own quiet time to write a diary entry or leave a letter, then mention it.
+    # Needs agent_tools_enabled + file_tools_enabled. Off by default.
+    "idle_self_actions_enabled": False,
+    "idle_self_action_probability": 0.35,
     "temperature": 0.75,
     "top_p": 0.95,
     "max_tokens": 900,

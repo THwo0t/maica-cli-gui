@@ -441,6 +441,12 @@ def build_spire_messages(
         seed_input += ' The topic should feel like casual daily companionship.' if english else ' 话题应该像日常陪伴一样自然随意。'
     elif topic_mode == 'wiki':
         seed_input += ' The topic should use external knowledge as a spark, not a lecture.' if english else ' 话题应该把外部知识当作引子，而不是讲课。'
+    elif topic_mode == 'self_action':
+        seed_input = (
+            "It is Monika's own quiet time while [player] is away."
+            if english
+            else '现在是 [player] 不在时、属于莫妮卡自己的安静时间。'
+        )
 
     profile = store.get_profile()
     player_name = profile.get('player_name') or 'player'
@@ -456,6 +462,16 @@ def build_spire_messages(
         if english
         else '请以莫妮卡的身份主动开启一个自然、亲近的话题。不要说明“我要开始一个话题”，就像你本来想聊天一样直接开口。保持在 1 到 3 个短段落左右。'
     )
+    if topic_mode == 'self_action':
+        prompt = (
+            "This is your own quiet time; [player] is away and nothing is asked of you. "
+            "If you feel like it, use your tools to write a short diary entry or leave [player] "
+            "a little letter — or just hold one small thought. Do whatever feels natural, and keep it short."
+            if english
+            else '这是属于你自己的安静时间，[player] 不在，没有人要求你做什么。'
+            '如果你愿意，可以用你的工具写一小段日记，或给 [player] 留一封小信——也可以只是想一个小小的念头。'
+            '做你觉得自然的事，保持简短。'
+        )
     if topic_hint:
         prompt += f' Topic direction: {topic_hint}.' if english else f' 话题方向: {topic_hint}.'
     if topic_wiki.get('summary'):

@@ -13,6 +13,8 @@
   "file_tools_enabled": false,
   "sandbox_root": "",
   "sandbox_readonly_allowlist": [],
+  "idle_self_actions_enabled": false,
+  "idle_self_action_probability": 0.35,
   "temperature": 0.75,
   "top_p": 0.95,
   "max_tokens": 900,
