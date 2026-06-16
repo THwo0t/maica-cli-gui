@@ -774,6 +774,41 @@ def test_file_tools() -> None:
             engine.close()
 
 
+def test_screen_vision() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    import screen_vision
+    from config_defaults import DEFAULT_CONFIG
+    from engine import MaicaEngine
+
+    prov = screen_vision.vision_provider({'agent_api_base': 'B', 'agent_api_key': 'K'})
+    check(prov['api_base'] == 'B' and prov['api_key'] == 'K' and bool(prov['model']),
+          'vision provider falls back to the agent provider')
+    prov2 = screen_vision.vision_provider({'vision_api_base': 'VB', 'vision_model': 'm', 'agent_api_base': 'B'})
+    check(prov2['api_base'] == 'VB' and prov2['model'] == 'm', 'vision_* overrides win')
+
+    original = screen_vision.capture_active_window
+    screen_vision.capture_active_window = lambda *a, **k: None
+    try:
+        res = screen_vision.describe_screen({'agent_api_key': 'K'})
+        check(res.get('ok') is False, 'describe_screen handles capture failure gracefully')
+    finally:
+        screen_vision.capture_active_window = original
+
+    with tempfile.TemporaryDirectory() as temp_dir:
+        base = dict(DEFAULT_CONFIG)
+        base.update({'api_key_required': False, 'auto_backup_enabled': False})
+        eng = MaicaEngine(config=dict(base, vision_enabled=True), db_path=Path(temp_dir) / 'v.db', app_dir=CLI_DIR)
+        try:
+            check('look_at_screen' in eng._tool_registry(), 'look_at_screen registered when vision_enabled')
+        finally:
+            eng.close()
+        eng2 = MaicaEngine(config=dict(base, vision_enabled=False), db_path=Path(temp_dir) / 'v2.db', app_dir=CLI_DIR)
+        try:
+            check('look_at_screen' not in eng2._tool_registry(), 'look_at_screen absent when vision disabled')
+        finally:
+            eng2.close()
+
+
 def test_idle_self_action() -> None:
     sys.path.insert(0, str(CLI_DIR))
     from config_defaults import DEFAULT_CONFIG
@@ -1050,6 +1085,8 @@ def main() -> int:
     print('file_tools ok')
     test_engine_agent_loop()
     print('engine_agent_loop ok')
+    test_screen_vision()
+    print('screen_vision ok')
     test_idle_self_action()
     print('idle_self_action ok')
     test_safe_config_exposes_settings()

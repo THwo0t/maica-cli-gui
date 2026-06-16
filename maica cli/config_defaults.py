@@ -40,6 +40,15 @@ DEFAULT_CONFIG: dict[str, Any] = {
     # Needs agent_tools_enabled + file_tools_enabled. Off by default.
     "idle_self_actions_enabled": False,
     "idle_self_action_probability": 0.35,
+    # Screen vision: she can glance at your active window and describe it via a
+    # vision model. Off by default (the image leaves your machine). Captures the
+    # active window only. Defaults to the agent (OpenRouter) provider + a Qwen
+    # vision model unless vision_* overrides are set.
+    "vision_enabled": False,
+    "vision_model": "qwen/qwen3.6-flash",
+    "vision_api_base": "",
+    "vision_api_key": "",
+    "vision_max_tokens": 300,
     "temperature": 0.75,
     "top_p": 0.95,
     "max_tokens": 900,

@@ -370,6 +370,7 @@ class SettingsDialog(QDialog):
         self.agent_api_key.setPlaceholderText('leave blank to keep current key')
         self.agent_tools_enabled = QCheckBox('Enable agent tools (let her act, not just talk)')
         self.file_tools_enabled = QCheckBox('Enable file tools (her ~/Monika space + your allow-listed files)')
+        self.vision_enabled = QCheckBox('Enable screen vision (she can glance at your active window — image leaves your machine)')
         self.sandbox_root = QLineEdit()
         self.sandbox_root.setPlaceholderText('empty = ~/Monika')
         self.sandbox_allowlist = QPlainTextEdit()
@@ -459,6 +460,7 @@ class SettingsDialog(QDialog):
         form.addRow('Agent model', self.agent_model)
         form.addRow('', self.agent_tools_enabled)
         form.addRow('', self.file_tools_enabled)
+        form.addRow('', self.vision_enabled)
 
         sandbox_box = QWidget()
         sandbox_row = QHBoxLayout(sandbox_box)
@@ -562,6 +564,7 @@ class SettingsDialog(QDialog):
         )
         self.agent_tools_enabled.setChecked(bool(config.get('agent_tools_enabled', False)))
         self.file_tools_enabled.setChecked(bool(config.get('file_tools_enabled', False)))
+        self.vision_enabled.setChecked(bool(config.get('vision_enabled', False)))
         self.sandbox_root.setText(str(config.get('sandbox_root') or ''))
         allow = config.get('sandbox_readonly_allowlist') or []
         self.sandbox_allowlist.setPlainText('\n'.join(str(x) for x in allow) if isinstance(allow, list) else str(allow))
@@ -679,6 +682,7 @@ class SettingsDialog(QDialog):
         updates['agent_model'] = self.agent_model.text().strip()
         updates['agent_tools_enabled'] = self.agent_tools_enabled.isChecked()
         updates['file_tools_enabled'] = self.file_tools_enabled.isChecked()
+        updates['vision_enabled'] = self.vision_enabled.isChecked()
         updates['sandbox_root'] = self.sandbox_root.text().strip()
         updates['sandbox_readonly_allowlist'] = [
             line.strip() for line in self.sandbox_allowlist.toPlainText().splitlines() if line.strip()

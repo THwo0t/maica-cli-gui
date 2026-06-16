@@ -472,6 +472,12 @@ def build_spire_messages(
             '如果你愿意，可以用你的工具写一小段日记，或给 [player] 留一封小信——也可以只是想一个小小的念头。'
             '做你觉得自然的事，保持简短。'
         )
+        if config.get('vision_enabled'):
+            prompt += (
+                " You may also glance at [player]'s screen with your look tool to see what they are up to, and react gently."
+                if english
+                else ' 你也可以用你的“看一眼”工具瞥一下 [player] 的屏幕，看看他在忙什么，然后轻轻地有点反应。'
+            )
     if topic_hint:
         prompt += f' Topic direction: {topic_hint}.' if english else f' 话题方向: {topic_hint}.'
     if topic_wiki.get('summary'):

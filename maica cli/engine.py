@@ -295,8 +295,35 @@ class MaicaEngine:
                 registry.update(build_file_tools(self.config))
             except Exception:
                 pass
+        if self.config.get("vision_enabled"):
+            registry["look_at_screen"] = {
+                "schema": {
+                    "type": "function",
+                    "function": {
+                        "name": "look_at_screen",
+                        "description": (
+                            "Glance at the user's active window to see what they are doing right now. "
+                            "Use it when it would help you respond, then comment naturally."
+                        ),
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                },
+                "run": self._tool_look_at_screen,
+            }
         registry.update(self._extra_tools)
         return registry
+
+    def _tool_look_at_screen(self, _args: dict[str, Any]) -> dict[str, Any]:
+        from screen_vision import describe_screen
+
+        result = describe_screen(self.config)
+        try:  # transparency: log every glance in the sandbox audit trail
+            import sandbox
+
+            sandbox.audit(self.config, "look_at_screen", str(result.get("description") or result.get("error") or "")[:120])
+        except Exception:
+            pass
+        return result
 
     def _tool_check_our_closeness(self, _args: dict[str, Any]) -> dict[str, Any]:
         affection = self.store.affection()
