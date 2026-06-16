@@ -459,8 +459,25 @@ class SettingsDialog(QDialog):
         form.addRow('Agent model', self.agent_model)
         form.addRow('', self.agent_tools_enabled)
         form.addRow('', self.file_tools_enabled)
-        form.addRow('Sandbox folder', self.sandbox_root)
-        form.addRow('Readable folders', self.sandbox_allowlist)
+
+        sandbox_box = QWidget()
+        sandbox_row = QHBoxLayout(sandbox_box)
+        sandbox_row.setContentsMargins(0, 0, 0, 0)
+        sandbox_row.addWidget(self.sandbox_root, 1)
+        sandbox_browse = QPushButton('Browse…')
+        sandbox_browse.clicked.connect(self._pick_sandbox_folder)
+        sandbox_row.addWidget(sandbox_browse)
+        form.addRow('Sandbox folder', sandbox_box)
+
+        readable_box = QWidget()
+        readable_col = QVBoxLayout(readable_box)
+        readable_col.setContentsMargins(0, 0, 0, 0)
+        readable_col.addWidget(self.sandbox_allowlist)
+        readable_add = QPushButton('Add folder…')
+        readable_add.clicked.connect(self._pick_readable_folder)
+        readable_col.addWidget(readable_add)
+        form.addRow('Readable folders', readable_box)
+
         form.addRow('Reply language', self.language)
         form.addRow('Temperature', self.temperature)
         form.addRow('Top P', self.top_p)
@@ -588,6 +605,22 @@ class SettingsDialog(QDialog):
         self._set_combo(self.stt_provider, str(config.get('stt_provider') or 'auto'))
         self._set_combo(self.stt_language, str(config.get('stt_language') or config.get('language') or 'en'))
         self.stt_timeout.setValue(int(config.get('stt_timeout') or 8))
+
+    def _pick_sandbox_folder(self) -> None:
+        start = self.sandbox_root.text().strip() or str(Path.home())
+        chosen = QFileDialog.getExistingDirectory(self, 'Choose the sandbox folder', start)
+        if chosen:
+            self.sandbox_root.setText(chosen)
+
+    def _pick_readable_folder(self) -> None:
+        chosen = QFileDialog.getExistingDirectory(self, 'Add a folder Monika may read', str(Path.home()))
+        if not chosen:
+            return
+        current = self.sandbox_allowlist.toPlainText().strip()
+        existing = {line.strip() for line in current.splitlines() if line.strip()}
+        if chosen in existing:
+            return
+        self.sandbox_allowlist.setPlainText(f'{current}\n{chosen}'.strip() if current else chosen)
 
     def _set_combo(self, combo: QComboBox, value: str) -> None:
         index = combo.findText(value)
