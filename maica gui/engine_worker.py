@@ -30,6 +30,38 @@ from data_portability import export_user_data, import_user_data, preview_user_da
 from text_utils import redact_secret  # noqa: E402
 
 
+# Single source of truth for GUI-editable config: maps key -> caster. Both the
+# save path (_apply_config_updates) and the snapshot path (_safe_config) derive
+# from this, so a settable key is always round-tripped to the GUI (no more
+# "the checkbox reverts after Save" class of bug).
+_UPDATABLE_FIELDS: dict[str, Any] = {
+    'api_base': str, 'api_key': str, 'model': str, 'llm_call_mode': str,
+    'agent_api_base': str, 'agent_api_key': str, 'agent_model': str,
+    'agent_tools_enabled': bool, 'file_tools_enabled': bool,
+    'vision_enabled': bool, 'vision_model': str,
+    'sandbox_root': str, 'sandbox_readonly_allowlist': list,
+    'language': str, 'temperature': float, 'top_p': float, 'max_tokens': int,
+    'frequency_penalty': float, 'presence_penalty': float, 'streaming_enabled': bool,
+    'response_output_mode': str, 'metadata_extract_enabled': bool,
+    'context_translation_enabled': bool, 'response_planner_mode': str,
+    'example_bank_limit': int, 'example_bank_weight': float, 'example_bank_min_score': float,
+    'mfocus_mode': str, 'mtrigger_mode': str, 'show_debug': bool,
+    'tts_enabled': bool, 'tts_provider': str, 'tts_bailian_model': str,
+    'tts_bailian_voice': str, 'tts_bailian_format': str, 'tts_playback_backend': str,
+    'tts_bailian_instruction': str, 'stt_provider': str, 'stt_language': str, 'stt_timeout': int,
+    'embedding_enabled': bool, 'memory_embedding_enabled': bool,
+    'embedding_service_enabled': bool, 'embedding_service_autostart': bool,
+    'embedding_service_host': str, 'embedding_service_port': int, 'embedding_service_timeout': int,
+    'gui_disable_thread_embeddings': bool, 'gui_background_mode': str, 'gui_load_recent_messages': int,
+    'gui_idle_spire_enabled': bool, 'gui_idle_spire_minutes': int, 'idle_self_actions_enabled': bool,
+    'gui_startup_greeting_enabled': bool, 'auto_memory_summary_enabled': bool,
+    'auto_memory_summary_turns': int, 'token_stats_enabled': bool,
+}
+# Non-secret config keys the GUI shows but cannot edit (read-only display).
+_EXTRA_SAFE_KEYS = {'example_bank_paths_by_language', 'example_bank_core_paths_by_language'}
+_SECRET_WORDS = ('key', 'token', 'secret', 'password')
+
+
 class GuiEngineWorker(QObject):
     ready = Signal(dict)
     config_ready = Signal(dict)
@@ -476,71 +508,16 @@ class GuiEngineWorker(QObject):
         }
 
     def _safe_config(self, config: dict[str, Any]) -> dict[str, Any]:
-        safe = {}
-        secret_words = ('key', 'token', 'secret', 'password')
-        public_keys = {
-            'api_base',
-            'model',
-            'llm_call_mode',
-            'agent_api_base',
-            'agent_model',
-            'agent_tools_enabled',
-            'file_tools_enabled',
-            'vision_enabled',
-            'vision_model',
-            'sandbox_root',
-            'sandbox_readonly_allowlist',
-            'language',
-            'temperature',
-            'top_p',
-            'max_tokens',
-            'frequency_penalty',
-            'presence_penalty',
-            'streaming_enabled',
-            'response_output_mode',
-            'metadata_extract_enabled',
-            'context_translation_enabled',
-            'response_planner_mode',
-            'example_bank_limit',
-            'example_bank_weight',
-            'example_bank_min_score',
-            'example_bank_paths_by_language',
-            'example_bank_core_paths_by_language',
-            'mfocus_mode',
-            'mtrigger_mode',
-            'tts_enabled',
-            'tts_provider',
-            'tts_bailian_model',
-            'tts_bailian_voice',
-            'tts_bailian_format',
-            'tts_playback_backend',
-            'tts_bailian_instruction',
-            'stt_provider',
-            'stt_language',
-            'stt_timeout',
-            'embedding_enabled',
-            'memory_embedding_enabled',
-            'embedding_service_enabled',
-            'embedding_service_autostart',
-            'embedding_service_host',
-            'embedding_service_port',
-            'embedding_service_timeout',
-            'gui_disable_thread_embeddings',
-            'gui_background_mode',
-            'gui_load_recent_messages',
-            'gui_idle_spire_enabled',
-            'gui_idle_spire_minutes',
-            'idle_self_actions_enabled',
-            'gui_startup_greeting_enabled',
-            'auto_memory_summary_enabled',
-            'auto_memory_summary_turns',
-            'token_stats_enabled',
-            'show_debug',
-        }
+        # Every non-secret settable key is exposed (derived from the single
+        # _UPDATABLE_FIELDS source), plus a few read-only display keys. Secret
+        # keys are reported only as present/empty.
+        public_keys = {k for k in _UPDATABLE_FIELDS if not any(w in k.lower() for w in _SECRET_WORDS)}
+        public_keys |= _EXTRA_SAFE_KEYS
+        safe: dict[str, Any] = {}
         for key, value in config.items():
             if key in public_keys:
                 safe[key] = value
-            elif any(word in key.lower() for word in secret_words):
+            elif any(word in key.lower() for word in _SECRET_WORDS):
                 safe[key] = '<hidden>' if value else ''
         return safe
 
@@ -551,65 +528,7 @@ class GuiEngineWorker(QObject):
         return json.dumps(payload, ensure_ascii=False, indent=2, default=str)
 
     def _apply_config_updates(self, engine: MaicaEngine, updates: dict[str, Any]) -> list[str]:
-        allowed = {
-            'api_base': str,
-            'api_key': str,
-            'model': str,
-            'llm_call_mode': str,
-            'agent_api_base': str,
-            'agent_api_key': str,
-            'agent_model': str,
-            'agent_tools_enabled': bool,
-            'file_tools_enabled': bool,
-            'vision_enabled': bool,
-            'vision_model': str,
-            'sandbox_root': str,
-            'sandbox_readonly_allowlist': list,
-            'language': str,
-            'temperature': float,
-            'top_p': float,
-            'max_tokens': int,
-            'frequency_penalty': float,
-            'presence_penalty': float,
-            'streaming_enabled': bool,
-            'response_output_mode': str,
-            'metadata_extract_enabled': bool,
-            'context_translation_enabled': bool,
-            'response_planner_mode': str,
-            'example_bank_limit': int,
-            'example_bank_weight': float,
-            'example_bank_min_score': float,
-            'mfocus_mode': str,
-            'mtrigger_mode': str,
-            'show_debug': bool,
-            'tts_enabled': bool,
-            'tts_provider': str,
-            'tts_bailian_model': str,
-            'tts_bailian_voice': str,
-            'tts_bailian_format': str,
-            'tts_playback_backend': str,
-            'tts_bailian_instruction': str,
-            'stt_provider': str,
-            'stt_language': str,
-            'stt_timeout': int,
-            'embedding_enabled': bool,
-            'memory_embedding_enabled': bool,
-            'embedding_service_enabled': bool,
-            'embedding_service_autostart': bool,
-            'embedding_service_host': str,
-            'embedding_service_port': int,
-            'embedding_service_timeout': int,
-            'gui_disable_thread_embeddings': bool,
-            'gui_background_mode': str,
-            'gui_load_recent_messages': int,
-            'gui_idle_spire_enabled': bool,
-            'gui_idle_spire_minutes': int,
-            'idle_self_actions_enabled': bool,
-            'gui_startup_greeting_enabled': bool,
-            'auto_memory_summary_enabled': bool,
-            'auto_memory_summary_turns': int,
-            'token_stats_enabled': bool,
-        }
+        allowed = _UPDATABLE_FIELDS
         applied: list[str] = []
         for key, caster in allowed.items():
             if key not in updates:
