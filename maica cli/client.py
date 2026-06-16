@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 import urllib.error
 import urllib.request
 from typing import Any, Iterator
@@ -53,14 +54,24 @@ class OpenAICompatibleClient:
             headers=self._headers(),
             method="POST",
         )
-        try:
-            with urllib.request.urlopen(request, timeout=int(self.config.get("request_timeout", 120))) as response:
-                raw = response.read().decode("utf-8")
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode("utf-8", "replace")
-            api_key = os.environ.get("MAICA_CLI_API_KEY") or str(self.config.get("api_key") or "")
-            raise RuntimeError(f"HTTP {exc.code}: {redact_secret(detail, api_key)}") from exc
-        return json.loads(raw)
+        timeout = int(self.config.get("request_timeout", 120))
+        attempts = max(1, int(self.config.get("request_retries", 3)))
+        api_key = os.environ.get("MAICA_CLI_API_KEY") or str(self.config.get("api_key") or "")
+        last_exc: Exception | None = None
+        for attempt in range(attempts):
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return json.loads(response.read().decode("utf-8"))
+            except urllib.error.HTTPError as exc:
+                # A real API response (4xx/5xx); do not retry — surface it.
+                detail = exc.read().decode("utf-8", "replace")
+                raise RuntimeError(f"HTTP {exc.code}: {redact_secret(detail, api_key)}") from exc
+            except Exception as exc:
+                # Transient: SSL EOF, IncompleteRead, timeout, connection reset.
+                last_exc = exc
+                if attempt < attempts - 1:
+                    time.sleep(0.8 * (attempt + 1))
+        raise RuntimeError(redact_secret(f"network error after {attempts} attempts: {last_exc}", api_key))
 
     def chat_with_usage(self, messages: list[dict[str, str]], overrides: dict[str, Any] | None = None) -> dict[str, Any]:
         body = self._body(messages, overrides)

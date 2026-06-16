@@ -36,8 +36,17 @@ class Store:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.path)
+        # check_same_thread=False: the GUI worker and the desktop pet run engine
+        # calls off the thread that created the connection. WAL + busy_timeout
+        # let the GUI and a standalone pet share the DB without "database is
+        # locked". Access is effectively serialized (one in-flight turn at a time).
+        self.conn = sqlite3.connect(self.path, check_same_thread=False, timeout=5.0)
         self.conn.row_factory = sqlite3.Row
+        for pragma in ('PRAGMA journal_mode=WAL', 'PRAGMA busy_timeout=3000', 'PRAGMA synchronous=NORMAL'):
+            try:
+                self.conn.execute(pragma)
+            except sqlite3.Error:
+                pass
         self.ensure_schema()
 
     def ensure_schema(self) -> None:

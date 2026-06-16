@@ -55,6 +55,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "frequency_penalty": 0.12,
     "presence_penalty": 0.08,
     "request_timeout": 120,
+    "request_retries": 3,
     "streaming_enabled": False,
     "history_messages": 16,
     "memory_limit": 8,

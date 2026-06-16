@@ -5,9 +5,12 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Any, Callable
+
+log = logging.getLogger("maica.engine")
 
 from client import OpenAICompatibleClient
 from config_defaults import DEFAULT_CONFIG
@@ -293,8 +296,8 @@ class MaicaEngine:
                 from file_tools import build_file_tools
 
                 registry.update(build_file_tools(self.config))
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("file tools failed to load: %s", exc)
         if self.config.get("vision_enabled"):
             registry["look_at_screen"] = {
                 "schema": {
