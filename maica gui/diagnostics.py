@@ -46,6 +46,11 @@ SAFE_CONFIG_KEYS = (
     'embedding_service_timeout',
     'gui_disable_thread_embeddings',
     'gui_background_mode',
+    'avatar_backend',
+    'vts_url',
+    'vts_plugin_name',
+    'vts_plugin_developer',
+    'vts_parameter_prefix',
     'tts_enabled',
     'tts_provider',
     'tts_bailian_model',
@@ -60,6 +65,7 @@ SECRET_KEYS = {
     'tts_bailian_api_key',
     'access_token',
     'refresh_token',
+    'vts_auth_token',
     'database_reset_password',
 }
 SECRET_MARKERS = ('secret', 'password')

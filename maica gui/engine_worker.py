@@ -56,6 +56,8 @@ _UPDATABLE_FIELDS: dict[str, Any] = {
     'gui_idle_spire_enabled': bool, 'gui_idle_spire_minutes': int, 'idle_self_actions_enabled': bool,
     'gui_startup_greeting_enabled': bool, 'auto_memory_summary_enabled': bool,
     'auto_memory_summary_turns': int, 'token_stats_enabled': bool,
+    'avatar_backend': str, 'vts_url': str, 'vts_plugin_name': str,
+    'vts_plugin_developer': str, 'vts_auth_token': str, 'vts_parameter_prefix': str,
 }
 # Non-secret config keys the GUI shows but cannot edit (read-only display).
 _EXTRA_SAFE_KEYS = {'example_bank_paths_by_language', 'example_bank_core_paths_by_language'}

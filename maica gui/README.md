@@ -59,6 +59,7 @@ assets.
 - Default dialogue output is English when `language` is set to `en`.
 - Background scene from MAS spaceroom assets.
 - Layered PNG avatar preview.
+- Avatar backend layer for PNG now, VTube Studio MVP, and future Live2D WebView.
 - Emotion metadata changes the visible expression preset.
 - MTrigger notices are shown in the chat log.
 - Windows SAPI TTS and Aliyun Bailian CosyVoice TTS.
@@ -77,6 +78,21 @@ assets.
 - Optional idle `/spire` proactive greeting.
 - Automatic lightweight memory summaries.
 - UTF-8 source/config validation in smoke tests.
+
+## Avatar / VTube Studio
+
+The default avatar backend is `png`, so the GUI behaves exactly like the
+layered sprite preview unless you opt in. To test VTube Studio:
+
+1. Install and open VTube Studio.
+2. Enable the VTube Studio Plugin API in VTube Studio settings.
+3. In MAICA Settings -> Avatar, set `Avatar backend` to `vtube_studio` or `auto`.
+4. Click `Connect / Test VTube Studio` and approve the plugin request in VTube Studio.
+
+The VTS MVP sends emotion, mouth-open, breathing, and simple angle parameters.
+Use the `Maica` custom parameter prefix, or change `vts_parameter_prefix` if
+your Live2D model uses a different binding. If VTS is closed or authorization
+fails, MAICA keeps using the PNG avatar and chat remains available.
 
 ## TTS
 

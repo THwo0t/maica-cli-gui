@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.11.11.
+"""MAICA GUI v0.12.1.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -50,7 +50,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.11.11'
+APP_VERSION = '0.12.1'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -60,6 +60,7 @@ if _PET_DIR.exists() and str(_PET_DIR) not in sys.path:
     sys.path.insert(0, str(_PET_DIR))
 
 from assets import AssetManager, normalize_emotion  # noqa: E402
+from avatar_controller import AvatarController  # noqa: E402
 from diagnostics import collect_report  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
 from stt import create_stt  # noqa: E402
@@ -81,6 +82,7 @@ TTS_PROVIDERS = ('auto', 'bailian_cosyvoice', 'windows_sapi', 'system_say', 'off
 TTS_PLAYBACK_BACKENDS = ('auto', 'ffplay', 'mpv', 'paplay', 'aplay', 'afplay', 'powershell', 'pwsh', 'off')
 STT_PROVIDERS = ('auto', 'windows_speech', 'bailian_paraformer', 'off')
 BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
+AVATAR_BACKENDS = ('png', 'vtube_studio', 'auto')
 SECRET_CONFIG_MARKERS = ('key', 'token', 'secret', 'password')
 
 
@@ -435,6 +437,17 @@ class SettingsDialog(QDialog):
         self.embedding_service_port.setRange(1024, 65535)
         self.gui_background_mode = QComboBox()
         self.gui_background_mode.addItems(BACKGROUND_MODES)
+        self.avatar_backend = QComboBox()
+        self.avatar_backend.addItems(AVATAR_BACKENDS)
+        self.vts_url = QLineEdit()
+        self.vts_plugin_name = QLineEdit()
+        self.vts_plugin_developer = QLineEdit()
+        self.vts_parameter_prefix = QLineEdit()
+        self.avatar_status = QLabel('avatar: png')
+        self.avatar_status.setObjectName('contextLabel')
+        self.avatar_status.setWordWrap(True)
+        self.avatar_test = QPushButton('Connect / Test VTube Studio')
+        self.avatar_test.clicked.connect(self._test_avatar_connection)
         self.gui_idle_spire_enabled = QCheckBox('Enable idle proactive talk')
         self.gui_idle_spire_minutes = QSpinBox()
         self.gui_idle_spire_minutes.setRange(1, 240)
@@ -460,6 +473,13 @@ class SettingsDialog(QDialog):
         self.stt_language.addItems(('en', 'zh'))
         self.stt_timeout = QSpinBox()
         self.stt_timeout.setRange(2, 30)
+        self.capability_summary = QLabel()
+        self.capability_summary.setWordWrap(True)
+        self.capability_summary.setObjectName('contextLabel')
+        self.capability_details = QPlainTextEdit()
+        self.capability_details.setObjectName('debugPanel')
+        self.capability_details.setReadOnly(True)
+        self.capability_details.setMaximumHeight(260)
 
         # --- Model & generation ---
         model_form = add_tab('Model')
@@ -532,6 +552,16 @@ class SettingsDialog(QDialog):
         gui_form.addRow('', self.idle_self_actions_enabled)
         gui_form.addRow('', self.gui_startup_greeting_enabled)
 
+        # --- Avatar ---
+        avatar_form = add_tab('Avatar')
+        avatar_form.addRow('Avatar backend', self.avatar_backend)
+        avatar_form.addRow('VTube Studio URL', self.vts_url)
+        avatar_form.addRow('VTS plugin name', self.vts_plugin_name)
+        avatar_form.addRow('VTS developer', self.vts_plugin_developer)
+        avatar_form.addRow('VTS parameter prefix', self.vts_parameter_prefix)
+        avatar_form.addRow('Status', self.avatar_status)
+        avatar_form.addRow('', self.avatar_test)
+
         # --- Voice (TTS / STT) ---
         voice_form = add_tab('Voice')
         voice_form.addRow('', self.tts_enabled)
@@ -544,6 +574,11 @@ class SettingsDialog(QDialog):
         voice_form.addRow('STT provider', self.stt_provider)
         voice_form.addRow('STT language', self.stt_language)
         voice_form.addRow('STT timeout', self.stt_timeout)
+
+        # --- Privacy status (read-only, no main-window clutter) ---
+        privacy_form = add_tab('Privacy')
+        privacy_form.addRow('At a glance', self.capability_summary)
+        privacy_form.addRow('Details', self.capability_details)
 
         layout.addWidget(tabs, 1)
 
@@ -610,6 +645,13 @@ class SettingsDialog(QDialog):
         self.embedding_service_port.setValue(int(config.get('embedding_service_port') or 8766))
         self.gui_disable_thread_embeddings.setChecked(bool(config.get('gui_disable_thread_embeddings', True)))
         self._set_combo(self.gui_background_mode, str(config.get('gui_background_mode') or 'auto'))
+        self._set_combo(self.avatar_backend, str(config.get('avatar_backend') or 'png'))
+        self.vts_url.setText(str(config.get('vts_url') or 'ws://127.0.0.1:8001'))
+        self.vts_plugin_name.setText(str(config.get('vts_plugin_name') or 'MAICA CLI GUI'))
+        self.vts_plugin_developer.setText(str(config.get('vts_plugin_developer') or 'THwo0t'))
+        self.vts_parameter_prefix.setText(str(config.get('vts_parameter_prefix') or 'Maica'))
+        avatar_status = getattr(self.owner, 'avatar_status_text', lambda: 'png')
+        self.avatar_status.setText(f'avatar: {avatar_status()}')
         self.gui_idle_spire_enabled.setChecked(bool(config.get('gui_idle_spire_enabled', False)))
         self.gui_idle_spire_minutes.setValue(int(config.get('gui_idle_spire_minutes') or 12))
         self.idle_self_actions_enabled.setChecked(bool(config.get('idle_self_actions_enabled', False)))
@@ -626,6 +668,67 @@ class SettingsDialog(QDialog):
         self._set_combo(self.stt_provider, str(config.get('stt_provider') or 'auto'))
         self._set_combo(self.stt_language, str(config.get('stt_language') or config.get('language') or 'en'))
         self.stt_timeout.setValue(int(config.get('stt_timeout') or 8))
+        self._render_privacy_status(config)
+
+    def _test_avatar_connection(self) -> None:
+        updates = {
+            'avatar_backend': self.avatar_backend.currentText(),
+            'vts_url': self.vts_url.text().strip(),
+            'vts_plugin_name': self.vts_plugin_name.text().strip(),
+            'vts_plugin_developer': self.vts_plugin_developer.text().strip(),
+            'vts_parameter_prefix': self.vts_parameter_prefix.text().strip(),
+        }
+        self.owner.reconnect_avatar_backend(updates)
+        self.avatar_status.setText(f'avatar: {self.owner.avatar_status_text()}')
+
+    def _render_privacy_status(self, config: dict[str, Any]) -> None:
+        def onoff(value: Any) -> str:
+            return 'on' if bool(value) else 'off'
+
+        allowlist = config.get('sandbox_readonly_allowlist') or []
+        allow_count = len(allowlist) if isinstance(allowlist, list) else 0
+        sandbox_root = str(config.get('sandbox_root') or '~/Monika')
+        agent_on = bool(config.get('agent_tools_enabled', False))
+        file_on = bool(config.get('file_tools_enabled', False))
+        vision_on = bool(config.get('vision_enabled', False))
+        network_bits = []
+        if config.get('api_base'):
+            network_bits.append('chat API')
+        if config.get('agent_api_base') and str(config.get('llm_call_mode') or 'unified') != 'unified':
+            network_bits.append('agent API')
+        if vision_on:
+            network_bits.append('vision API')
+        if str(config.get('avatar_backend') or 'png') in {'vtube_studio', 'auto'}:
+            network_bits.append('local VTube Studio WebSocket')
+        if config.get('tts_enabled') and str(config.get('tts_provider') or '').lower() in {'bailian_cosyvoice', 'aliyun_bailian', 'cosyvoice'}:
+            network_bits.append('Bailian TTS')
+        if str(config.get('stt_provider') or '').lower() in {'bailian_paraformer', 'paraformer', 'dashscope_paraformer'}:
+            network_bits.append('Bailian STT')
+        network_text = ', '.join(network_bits) if network_bits else 'none except local runtime'
+        summary = (
+            f"Agent tools {onoff(agent_on)} · file tools {onoff(file_on)} · "
+            f"vision {onoff(vision_on)} · readable folders {allow_count}"
+        )
+        details = [
+            'Capabilities / Privacy',
+            f"- Agent tools: {onoff(agent_on)}",
+            f"- File tools: {onoff(file_on)}",
+            f"- Writable sandbox: {sandbox_root}",
+            f"- Readable user folders: {allow_count} explicitly allow-listed",
+            f"- Screen vision: {onoff(vision_on)} (active-window image may leave this machine when enabled)",
+            f"- Network use: {network_text}",
+            f"- Embedding service: {onoff(config.get('embedding_service_enabled', False))}",
+            f"- Idle self-actions: {onoff(config.get('idle_self_actions_enabled', False))}",
+            '',
+            'Safety model:',
+            '- No sudo or shell tools are exposed here.',
+            '- Tools are allow-listed functions, not arbitrary commands.',
+            '- User files require explicit readable-folder allow-listing.',
+            '- Writes stay inside the configured Monika sandbox.',
+            '- Vision is opt-in and should be treated as cloud upload of the active window.',
+        ]
+        self.capability_summary.setText(summary)
+        self.capability_details.setPlainText('\n'.join(details))
 
     def _pick_sandbox_folder(self) -> None:
         start = self.sandbox_root.text().strip() or str(Path.home())
@@ -678,6 +781,11 @@ class SettingsDialog(QDialog):
             'embedding_service_port': self.embedding_service_port.value(),
             'gui_disable_thread_embeddings': self.gui_disable_thread_embeddings.isChecked(),
             'gui_background_mode': self.gui_background_mode.currentText(),
+            'avatar_backend': self.avatar_backend.currentText(),
+            'vts_url': self.vts_url.text().strip(),
+            'vts_plugin_name': self.vts_plugin_name.text().strip(),
+            'vts_plugin_developer': self.vts_plugin_developer.text().strip(),
+            'vts_parameter_prefix': self.vts_parameter_prefix.text().strip(),
             'gui_idle_spire_enabled': self.gui_idle_spire_enabled.isChecked(),
             'gui_idle_spire_minutes': self.gui_idle_spire_minutes.value(),
             'idle_self_actions_enabled': self.idle_self_actions_enabled.isChecked(),
@@ -1052,6 +1160,7 @@ class MainWindow(QMainWindow):
         self.settings_dialog: SettingsDialog | None = None
         self.eval_dialog: EvalDialog | None = None
         self.pet_window: Any = None
+        self.avatar_controller: AvatarController | None = None
         self.current_config: dict[str, Any] = {}
         self.last_user_activity = dt.datetime.now()
         self.idle_spire_sent = False
@@ -1067,12 +1176,23 @@ class MainWindow(QMainWindow):
         self.typing_timer = QTimer(self)
         self.typing_timer.setInterval(420)
         self.typing_timer.timeout.connect(self._tick_typing)
+        self.avatar_timer = QTimer(self)
+        self.avatar_timer.setInterval(250)
+        self.avatar_timer.timeout.connect(self._tick_avatar)
 
         suffix = ' · SAFE TEST DB' if self.safe_test_mode else ''
         self.setWindowTitle(f'MAICA GUI v{APP_VERSION}{suffix}')
         self.resize(1180, 760)
         self.setMinimumSize(980, 640)
         self._build_ui()
+        self.avatar_controller = AvatarController(
+            self.assets,
+            self.avatar_label,
+            self.current_config,
+            on_status=self._handle_avatar_status,
+            on_token=self._handle_vts_token,
+        )
+        self.avatar_timer.start()
         self._connect_worker()
         self.set_emotion('smile')
         self.add_system_message('MAICA GUI started. CLI is available as a debugger.')
@@ -1241,6 +1361,9 @@ class MainWindow(QMainWindow):
         self.tts.stop()
         self.idle_timer.stop()
         self.typing_timer.stop()
+        self.avatar_timer.stop()
+        if self.avatar_controller is not None:
+            self.avatar_controller.stop()
         if self.pet_window is not None:
             self.pet_window.close()
         self.shutdown_requested.emit()
@@ -1300,6 +1423,7 @@ class MainWindow(QMainWindow):
         self.spire_button.setEnabled(not busy)
         self.input_box.setEnabled(not busy)
         if busy:
+            self.set_emotion('thinking')
             self.typing_phase = 0
             self._tick_typing()
             self.typing_timer.start()
@@ -1321,16 +1445,68 @@ class MainWindow(QMainWindow):
         normalized = normalize_emotion(emotion)
         self.current_emotion = normalized
         self.status_label.setProperty('emotion', normalized)
-        self.status_label.setText(f'♥ {normalized}')
-        avatar = self.assets.compose_avatar(normalized)
-        if avatar.isNull():
+        self._update_avatar_status_label()
+        if self.avatar_controller is not None:
+            self.avatar_controller.set_emotion(normalized)
+        else:
+            avatar = self.assets.compose_avatar(normalized)
+            if avatar.isNull():
+                return
+            scaled = avatar.scaled(
+                self.avatar_label.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            self.avatar_label.setPixmap(scaled)
+
+    def avatar_status_text(self) -> str:
+        if self.avatar_controller is None:
+            return 'png'
+        return self.avatar_controller.status_text()
+
+    def _update_avatar_status_label(self) -> None:
+        suffix = ''
+        if self.avatar_controller is not None and self.avatar_controller.backend != 'png':
+            suffix = f' · avatar {self.avatar_controller.status_text()}'
+        self.status_label.setText(f'♥ {self.current_emotion}{suffix}')
+
+    def _handle_avatar_status(self, _status: str) -> None:
+        if not self.typing_timer.isActive():
+            self._update_avatar_status_label()
+        if self.settings_dialog is not None:
+            self.settings_dialog.avatar_status.setText(f'avatar: {self.avatar_status_text()}')
+
+    def _handle_vts_token(self, token: str) -> None:
+        token = str(token or '').strip()
+        if not token or token == self.current_config.get('vts_auth_token'):
             return
-        scaled = avatar.scaled(
-            self.avatar_label.size(),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation,
-        )
-        self.avatar_label.setPixmap(scaled)
+        self.current_config['vts_auth_token'] = token
+        self.config_save_requested.emit({'vts_auth_token': token})
+
+    def reconnect_avatar_backend(self, overrides: dict[str, Any] | None = None) -> None:
+        if overrides:
+            merge_runtime_config(self.current_config, overrides)
+        if self.avatar_controller is None:
+            return
+        self.avatar_controller.configure(self.current_config)
+        self.avatar_controller.set_emotion(self.current_emotion)
+        self._update_avatar_status_label()
+
+    def _tick_avatar(self) -> None:
+        if self.avatar_controller is not None:
+            self.avatar_controller.tick()
+
+    def _estimate_tts_duration_ms(self, text: str) -> int:
+        compact = ''.join(str(text or '').split())
+        # Roughly 11 CJK chars/sec or 16 Latin chars/sec, clamped for UI safety.
+        cjk = sum(1 for ch in compact if '\u4e00' <= ch <= '\u9fff')
+        latin = max(0, len(compact) - cjk)
+        seconds = cjk / 11.0 + latin / 16.0 + 1.2
+        return max(2200, min(30000, int(seconds * 1000)))
+
+    def _stop_avatar_speaking(self) -> None:
+        if self.avatar_controller is not None:
+            self.avatar_controller.set_speaking(False)
 
     def visual_state_from_result(self, result: dict[str, Any]) -> dict[str, Any]:
         emotion = str(result.get('emotion') or 'neutral')
@@ -1373,6 +1549,7 @@ class MainWindow(QMainWindow):
 
     def _handle_config_ready(self, config: dict[str, Any]) -> None:
         self.current_config = dict(config)
+        self.reconnect_avatar_backend()
         self.refresh_background()
         self.tts = create_tts(config)
         self.stt = create_stt(config)
@@ -1390,10 +1567,12 @@ class MainWindow(QMainWindow):
         self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
         if not self.tts_enabled:
             self.tts.stop()
+            self._stop_avatar_speaking()
         self.add_system_message('TTS enabled.' if self.tts_enabled else 'TTS disabled.')
 
     def stop_tts(self) -> None:
         self.tts.stop()
+        self._stop_avatar_speaking()
 
     def listen_once(self) -> None:
         if self.stt_busy:
@@ -1546,6 +1725,7 @@ class MainWindow(QMainWindow):
         if payload.get('action') == 'save_config':
             self.tts = create_tts(self.current_config)
             self.stt = create_stt(self.current_config)
+            self.reconnect_avatar_backend()
             self.tts_enabled = bool(self.current_config.get('tts_enabled', False))
             self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
             self.refresh_background()
@@ -1612,6 +1792,8 @@ class MainWindow(QMainWindow):
         reply_text = str(result.get('text') or '')
         emotion = str(visual_state.get('raw_emotion') or 'neutral')
         self.set_emotion(str(visual_state.get('emotion') or emotion))
+        if self.avatar_controller is not None:
+            self.avatar_controller.play_action(visual_state.get('action'))
         if result.get('streamed') and self.streaming_active:
             # Replace the live-streamed raw text with the engine's final reply
             # (language-enforced / cleaned), so e.g. a first-turn Chinese stream
@@ -1626,7 +1808,10 @@ class MainWindow(QMainWindow):
         self.update_debug_panel(result)
         if self.tts_enabled and reply_text:
             self.add_system_message('TTS is synthesizing/playing...')
+            if self.avatar_controller is not None:
+                self.avatar_controller.set_speaking(True)
             self.tts.speak(reply_text)
+            QTimer.singleShot(self._estimate_tts_duration_ms(reply_text), self._stop_avatar_speaking)
             QTimer.singleShot(1800, self.report_tts_error_if_any)
             QTimer.singleShot(6000, self.report_tts_error_if_any)
         for notice in result.get('mtrigger_notices') or []:
@@ -1695,6 +1880,7 @@ class MainWindow(QMainWindow):
         error = str(getattr(self.tts, 'last_error', '') or '').strip()
         if error and error != self.last_tts_error:
             self.last_tts_error = error
+            self._stop_avatar_speaking()
             self.add_system_message(f'TTS error: {error}')
 
 

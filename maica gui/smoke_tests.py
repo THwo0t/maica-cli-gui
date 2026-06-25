@@ -31,6 +31,10 @@ def check(condition: bool, message: str) -> None:
 def compile_python() -> None:
     files = [
         GUI_DIR / 'assets.py',
+        GUI_DIR / 'avatar_controller.py',
+        GUI_DIR / 'avatar_driver.py',
+        GUI_DIR / 'avatar_png.py',
+        GUI_DIR / 'avatar_vts.py',
         GUI_DIR / 'engine_worker.py',
         GUI_DIR / 'gui_app.py',
         GUI_DIR / 'diagnostics.py',
@@ -133,6 +137,19 @@ def test_embedding_service_help() -> None:
     )
     check(completed.returncode == 0, completed.stderr or completed.stdout)
     check('embedding retrieval service' in completed.stdout, 'embedding service help text mismatch')
+
+
+def test_avatar_helpers() -> None:
+    sys.path.insert(0, str(GUI_DIR))
+    from avatar_vts import EMOTION_INDEX, VTubeStudioDriver
+
+    check(EMOTION_INDEX['smile'] == 1.0, 'VTS emotion index should include smile')
+    driver = VTubeStudioDriver({'vts_url': 'ws://127.0.0.1:9', 'vts_auth_token': 'token'})
+    check(driver.status_text() == 'stopped', 'VTS driver should be inert before start')
+    driver.set_emotion('smile')
+    driver.set_speaking(True)
+    driver.set_mouth_open(0.5)
+    driver.stop()
 
 
 def test_text_helpers() -> None:
@@ -1061,6 +1078,8 @@ def main() -> int:
     print('diagnostics ok')
     test_embedding_service_help()
     print('embedding_service_help ok')
+    test_avatar_helpers()
+    print('avatar_helpers ok')
     test_text_helpers()
     print('text_helpers ok')
     test_engine_fake_chat()
