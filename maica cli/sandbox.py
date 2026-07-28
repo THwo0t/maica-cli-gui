@@ -36,6 +36,19 @@ def readonly_roots(config: dict[str, Any]) -> list[Path]:
     return roots
 
 
+def permission_info(config: dict[str, Any]) -> dict[str, Any]:
+    """Return the effective filesystem boundary exposed to Monika's tools."""
+    root = sandbox_root(config)
+    return {
+        'logical_root': 'sandbox://',
+        'writable_root': str(root),
+        'readonly_roots': [str(path) for path in readonly_roots(config)],
+        'write_policy': 'sandbox_only',
+        'external_read_policy': 'explicit_allowlist_only',
+        'external_write_allowed': False,
+    }
+
+
 def ensure_sandbox(config: dict[str, Any]) -> Path:
     root = sandbox_root(config)
     root.mkdir(parents=True, exist_ok=True)
@@ -64,7 +77,11 @@ def resolve_writable(config: dict[str, Any], user_path: str) -> Path:
     root = sandbox_root(config)
     resolved = _resolve(root, user_path)
     if not _within(resolved, root):
-        raise PermissionError('path escapes the sandbox')
+        audit(config, 'deny_write', f'requested={user_path!r}; resolved={resolved}')
+        raise PermissionError(
+            'write denied: the path is outside the writable sandbox; '
+            'use get_file_space_info to confirm the real sandbox path'
+        )
     return resolved
 
 
@@ -75,7 +92,11 @@ def resolve_readable(config: dict[str, Any], user_path: str) -> Path:
     for allowed in [root, *readonly_roots(config)]:
         if _within(resolved, allowed):
             return resolved
-    raise PermissionError('path is not inside the sandbox or an allow-listed directory')
+    audit(config, 'deny_read', f'requested={user_path!r}; resolved={resolved}')
+    raise PermissionError(
+        'read denied: the path is outside the sandbox and is not recorded in '
+        'the read-only allowlist; use get_file_space_info to inspect the boundary'
+    )
 
 
 def audit(config: dict[str, Any], action: str, detail: str) -> None:
@@ -83,7 +104,9 @@ def audit(config: dict[str, Any], action: str, detail: str) -> None:
         root = sandbox_root(config)
         root.mkdir(parents=True, exist_ok=True)
         stamp = dt.datetime.now().isoformat(timespec='seconds')
+        safe_action = str(action).replace('\t', ' ').replace('\r', ' ').replace('\n', ' ')
+        safe_detail = str(detail).replace('\r', '\\r').replace('\n', '\\n')
         with (root / AUDIT_FILE).open('a', encoding='utf-8') as handle:
-            handle.write(f'{stamp}\t{action}\t{detail}\n')
+            handle.write(f'{stamp}\t{safe_action}\t{safe_detail}\n')
     except Exception:
         pass

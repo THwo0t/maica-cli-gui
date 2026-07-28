@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.12.1.
+"""MAICA GUI v0.12.2.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -16,8 +16,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap, QRadialGradient
+from PySide6.QtCore import QEvent, QObject, Qt, QThread, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QFont, QPainter, QPixmap, QRadialGradient
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -50,7 +50,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.12.1'
+APP_VERSION = '0.12.2'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -511,6 +511,9 @@ class SettingsDialog(QDialog):
         sandbox_browse = QPushButton('Browse…')
         sandbox_browse.clicked.connect(self._pick_sandbox_folder)
         sandbox_row.addWidget(sandbox_browse)
+        sandbox_open = QPushButton('Open')
+        sandbox_open.clicked.connect(self._open_sandbox_folder)
+        sandbox_row.addWidget(sandbox_open)
         tools_form.addRow('Sandbox folder', sandbox_box)
         readable_box = QWidget()
         readable_col = QVBoxLayout(readable_box)
@@ -687,7 +690,11 @@ class SettingsDialog(QDialog):
 
         allowlist = config.get('sandbox_readonly_allowlist') or []
         allow_count = len(allowlist) if isinstance(allowlist, list) else 0
-        sandbox_root = str(config.get('sandbox_root') or '~/Monika')
+        configured_root = str(config.get('sandbox_root') or '').strip()
+        sandbox_root = str(
+            (Path(configured_root).expanduser() if configured_root else Path.home() / 'Monika')
+            .resolve(strict=False)
+        )
         agent_on = bool(config.get('agent_tools_enabled', False))
         file_on = bool(config.get('file_tools_enabled', False))
         vision_on = bool(config.get('vision_enabled', False))
@@ -735,6 +742,17 @@ class SettingsDialog(QDialog):
         chosen = QFileDialog.getExistingDirectory(self, 'Choose the sandbox folder', start)
         if chosen:
             self.sandbox_root.setText(chosen)
+
+    def _open_sandbox_folder(self) -> None:
+        configured = self.sandbox_root.text().strip()
+        target = (Path(configured).expanduser() if configured else Path.home() / 'Monika').resolve(strict=False)
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.warning(self, 'Sandbox folder', f'Could not open the sandbox folder:\n{exc}')
+            return
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(target))):
+            QMessageBox.warning(self, 'Sandbox folder', f'Could not open:\n{target}')
 
     def _pick_readable_folder(self) -> None:
         chosen = QFileDialog.getExistingDirectory(self, 'Add a folder Monika may read', str(Path.home()))

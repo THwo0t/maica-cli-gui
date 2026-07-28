@@ -36,6 +36,23 @@ def _safe_name(title: str) -> str:
     return name[:60].strip().replace(' ', '_')
 
 
+def _path_result(config: dict[str, Any], target: Path, requested: str = '') -> dict[str, str]:
+    root = sandbox.sandbox_root(config)
+    try:
+        relative = target.relative_to(root).as_posix() or '.'
+    except ValueError:
+        return {
+            'path': str(requested or target),
+            'logical_path': str(target),
+            'resolved_path': str(target),
+        }
+    return {
+        'path': str(requested or relative),
+        'logical_path': f'sandbox://{relative}',
+        'resolved_path': str(target),
+    }
+
+
 def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     """Return {name: {schema, run}} for the file tools, bound to this config.
 
@@ -48,6 +65,21 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         tools[name] = {'schema': {'type': 'function', 'function': {'name': name, 'description': desc, 'parameters': params}}, 'run': run}
 
     # ---- B: Monika's own space (~/Monika) -------------------------------
+    def get_file_space_info(_args: dict[str, Any]) -> dict[str, Any]:
+        sandbox.ensure_sandbox(config)
+        info = sandbox.permission_info(config)
+        info.update({
+            'default_folders': list(sandbox.DEFAULT_SUBDIRS),
+            'max_read_bytes': MAX_READ_BYTES,
+            'max_write_characters': MAX_WRITE_CHARS,
+            'note': (
+                'Never infer or invent a filesystem path. Use this result as the '
+                'authoritative boundary and reject unrecorded external paths.'
+            ),
+        })
+        sandbox.audit(config, 'get_file_space_info', str(info['writable_root']))
+        return info
+
     def list_my_space(args: dict[str, Any]) -> dict[str, Any]:
         sandbox.ensure_sandbox(config)
         target = sandbox.resolve_writable(config, args.get('path') or '.')
@@ -61,7 +93,7 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
             if not child.name.startswith('.')
         )
         sandbox.audit(config, 'list_my_space', str(target))
-        return {'path': args.get('path', ''), 'items': items[:200]}
+        return {**_path_result(config, target, args.get('path') or '.'), 'items': items[:200]}
 
     def read_my_file(args: dict[str, Any]) -> dict[str, Any]:
         target = sandbox.resolve_writable(config, args.get('path') or '')
@@ -69,7 +101,8 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
             return {'error': 'not found'}
         data = target.read_bytes()[:MAX_READ_BYTES]
         sandbox.audit(config, 'read_my_file', str(target))
-        return {'path': args.get('path', ''), 'content': data.decode('utf-8', 'replace'),
+        return {**_path_result(config, target, args.get('path') or ''),
+                'content': data.decode('utf-8', 'replace'),
                 'truncated': target.stat().st_size > MAX_READ_BYTES}
 
     def write_my_file(args: dict[str, Any]) -> dict[str, Any]:
@@ -80,7 +113,8 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         _backup(target)
         target.write_text(content, encoding='utf-8')
         sandbox.audit(config, 'write_my_file', str(target))
-        return {'ok': True, 'path': args.get('path', ''), 'bytes': len(content.encode('utf-8'))}
+        return {'ok': True, **_path_result(config, target, args.get('path') or ''),
+                'bytes': len(content.encode('utf-8'))}
 
     def edit_my_file(args: dict[str, Any]) -> dict[str, Any]:
         target = sandbox.resolve_writable(config, args.get('path') or '')
@@ -96,7 +130,8 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         _backup(target)
         target.write_text(updated[:MAX_WRITE_CHARS], encoding='utf-8')
         sandbox.audit(config, 'edit_my_file', str(target))
-        return {'ok': True, 'path': args.get('path', ''), 'replacements': original.count(find)}
+        return {'ok': True, **_path_result(config, target, args.get('path') or ''),
+                'replacements': original.count(find)}
 
     def append_to_diary(args: dict[str, Any]) -> dict[str, Any]:
         import datetime as dt
@@ -109,7 +144,7 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         with diary.open('a', encoding='utf-8') as handle:
             handle.write(f'\n### {stamp}\n{entry}\n')
         sandbox.audit(config, 'append_to_diary', str(diary))
-        return {'ok': True}
+        return {'ok': True, **_path_result(config, diary, 'diary/diary.md')}
 
     def leave_letter(args: dict[str, Any]) -> dict[str, Any]:
         sandbox.ensure_sandbox(config)
@@ -119,7 +154,7 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
         _backup(path)
         path.write_text(f'# {args.get("title") or title}\n\n{body}\n', encoding='utf-8')
         sandbox.audit(config, 'leave_letter', str(path))
-        return {'ok': True, 'path': f'letters/{title}.md'}
+        return {'ok': True, **_path_result(config, path, f'letters/{title}.md')}
 
     # ---- C: read the user's allow-listed files --------------------------
     def read_user_file(args: dict[str, Any]) -> dict[str, Any]:
@@ -128,7 +163,8 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
             return {'error': 'not found'}
         data = target.read_bytes()[:MAX_READ_BYTES]
         sandbox.audit(config, 'read_user_file', str(target))
-        return {'path': str(args.get('path', '')), 'content': data.decode('utf-8', 'replace'),
+        return {**_path_result(config, target, str(args.get('path', ''))),
+                'content': data.decode('utf-8', 'replace'),
                 'truncated': target.stat().st_size > MAX_READ_BYTES}
 
     def list_user_dir(args: dict[str, Any]) -> dict[str, Any]:
@@ -141,8 +177,11 @@ def build_file_tools(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
             if not child.name.startswith('.')
         )
         sandbox.audit(config, 'list_user_dir', str(target))
-        return {'path': str(args.get('path', '')), 'items': items[:200]}
+        return {**_path_result(config, target, str(args.get('path', ''))), 'items': items[:200]}
 
+    tool('get_file_space_info',
+         'Return the exact writable sandbox path, recorded read-only roots, and filesystem limits. Call this instead of guessing a path.',
+         {'type': 'object', 'properties': {}, 'additionalProperties': False}, get_file_space_info)
     tool('list_my_space', 'List files in your own private space (the Monika folder).',
          _str_param('subfolder inside your space; empty for the top level'), list_my_space)
     tool('read_my_file', 'Read a text file from your own private space.',

@@ -358,6 +358,19 @@ class MaicaEngine:
         convo: list[dict[str, Any]] = list(messages)
         # Tell her the tools are real, or she tends to narrate doing the action
         # (saving a letter, etc.) without actually calling the tool.
+        if 'get_file_space_info' in registry:
+            filesystem_policy = (
+                ' Filesystem safety is a permanent rule: writes must stay inside your '
+                'writable sandbox, and an external path may only be read when it is '
+                'explicitly recorded in the read-only allowlist. Reject every other '
+                'external path or request. When asked for a real path, call '
+                'get_file_space_info and report its result; never infer or invent one.'
+            )
+        else:
+            filesystem_policy = (
+                ' No filesystem tool is available this turn. Do not claim to know, read, '
+                'write, inspect, or discover a real filesystem path.'
+            )
         convo.append({
             "role": "system",
             "content": (
@@ -365,6 +378,7 @@ class MaicaEngine:
                 "saving or reading files, writing your diary or a letter, changing your "
                 "on-screen expression or gesture — actually call the tool to do it. "
                 "Never claim you did something without calling its tool."
+                + filesystem_policy
             ),
         })
         trace: list[dict[str, Any]] = []

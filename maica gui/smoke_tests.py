@@ -718,6 +718,10 @@ def test_sandbox_path_safety() -> None:
         (allow / 'a.txt').write_text('y', encoding='utf-8')
         config = {'sandbox_root': str(root), 'sandbox_readonly_allowlist': [str(allow)]}
         sandbox.ensure_sandbox(config)
+        info = sandbox.permission_info(config)
+        check(info['writable_root'] == str(root.resolve()), 'permission info must expose the real sandbox root')
+        check(info['readonly_roots'] == [str(allow.resolve())], 'permission info must expose only recorded read roots')
+        check(info['external_write_allowed'] is False, 'external writes must never be allowed')
 
         ok_path = sandbox.resolve_writable(config, 'diary/x.md')
         check(str(ok_path).startswith(str(root.resolve())), 'in-sandbox write must be allowed')
@@ -734,6 +738,9 @@ def test_sandbox_path_safety() -> None:
             check(False, 'non-allow-listed read must be rejected')
         except PermissionError:
             pass
+        audit_text = (root / '.audit.log').read_text(encoding='utf-8')
+        check('deny_write' in audit_text and 'deny_read' in audit_text,
+              'denied external paths must be recorded in the audit log')
 
         link = root / 'escape'
         try:
@@ -763,10 +770,16 @@ def test_file_tools() -> None:
         engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'e.db', app_dir=CLI_DIR)
         try:
             reg = engine._tool_registry()
-            for name in ('write_my_file', 'read_my_file', 'append_to_diary', 'leave_letter', 'read_user_file'):
+            for name in ('get_file_space_info', 'write_my_file', 'read_my_file',
+                         'append_to_diary', 'leave_letter', 'read_user_file'):
                 check(name in reg, f'file tool not registered: {name}')
 
-            check(reg['write_my_file']['run']({'path': 'notes/hi.txt', 'content': 'hello'}).get('ok'), 'write_my_file ok')
+            space = reg['get_file_space_info']['run']({})
+            check(space.get('writable_root') == str(root.resolve()), 'tool must report the real sandbox path')
+            write_result = reg['write_my_file']['run']({'path': 'notes/hi.txt', 'content': 'hello'})
+            check(write_result.get('ok'), 'write_my_file ok')
+            check(write_result.get('resolved_path') == str((root / 'notes' / 'hi.txt').resolve()),
+                  'file tool results must expose their resolved path')
             check((root / 'notes' / 'hi.txt').read_text(encoding='utf-8') == 'hello', 'file written inside sandbox')
             check(reg['read_my_file']['run']({'path': 'notes/hi.txt'}).get('content') == 'hello', 'read_my_file round-trip')
             reg['append_to_diary']['run']({'entry': 'dear diary'})
@@ -876,6 +889,13 @@ def test_engine_agent_loop() -> None:
         def complete_with_tools(self, messages, tools=None, overrides=None):
             self.calls += 1
             if self.calls == 1:
+                system_text = ' '.join(str(item.get('content') or '') for item in messages if item.get('role') == 'system')
+                tool_names = {
+                    str((item.get('function') or {}).get('name') or '')
+                    for item in (tools or [])
+                }
+                assert 'get_file_space_info' in tool_names, 'agent must receive the filesystem boundary tool'
+                assert 'never infer or invent' in system_text.lower(), 'agent must receive the no-guess path policy'
                 return {
                     'message': {
                         'role': 'assistant',
@@ -911,6 +931,8 @@ def test_engine_agent_loop() -> None:
                 'memory_embedding_enabled': False,
                 'embedding_service_enabled': False,
                 'agent_tools_enabled': True,
+                'file_tools_enabled': True,
+                'sandbox_root': str(Path(temp_dir) / 'Monika'),
             }
         )
         engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'agent.db', app_dir=CLI_DIR)
