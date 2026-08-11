@@ -1,4 +1,4 @@
-# MAICA GUI v0.12.3
+# MAICA GUI v0.12.4
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -63,6 +63,8 @@ assets.
 - Emotion metadata changes the visible expression preset.
 - MTrigger notices are shown in the chat log.
 - Windows SAPI TTS and Aliyun Bailian CosyVoice TTS.
+- Ordered Speech Sessions with sentence-level synthesis and real Qt playback lifecycle events.
+- Live RMS audio amplitude drives avatar mouth state; no text-length playback estimate is used.
 - Persistent background engine worker, so GUI no longer rebuilds the engine every turn.
 - Structured per-turn runtime events for text, metadata, tools, completion, failure, and cancellation.
 - The Send button becomes Stop while a turn is running; cancelled or stale turns cannot update the GUI.
@@ -141,8 +143,10 @@ external TTS provider such as Bailian CosyVoice.
 }
 ```
 
-The current adapter requests MP3 or WAV audio and plays it through a child
-process. Playback backend `auto` chooses a platform-appropriate command:
+The current adapter requests MP3 or WAV audio, then the GUI plays it with
+`QMediaPlayer` and `QAudioOutput`. This gives MAICA authoritative start/end
+events and real audio amplitude for later Live2D lip sync. Legacy direct TTS
+calls can still use a child-process playback backend:
 
 - Windows: `powershell`, `pwsh`, `ffplay`, or `mpv`.
 - Linux: `ffplay` or `mpv`; WAV can also fall back to `paplay` or `aplay`.
@@ -160,7 +164,10 @@ or:
 sudo pacman -S mpv
 ```
 
-This keeps network synthesis and playback outside the Qt main thread.
+Network synthesis stays outside the Qt main thread. Safe complete sentences may
+be synthesized while text is streaming, with at most two synthesis jobs by
+default, but playback always follows the original sentence order. A new reply
+cancels the old speech session.
 
 Before TTS synthesis, the GUI removes bracketed stage directions and metadata
 from the spoken text. The visible chat text is unchanged; only the voice line is

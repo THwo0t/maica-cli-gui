@@ -1,7 +1,7 @@
 # MAICA GUI runtime dependencies.
 
 # Required: Qt bindings for the desktop GUI.
-PySide6>=6.7
+PySide6>=6.8
 
 # Optional: Aliyun Bailian CosyVoice TTS + Paraformer STT providers
 # (cross-platform, need a DashScope API key).
@@ -14,10 +14,9 @@ numpy
 
 # --- Cross-platform audio / voice notes (not pip-installable) ---
 #
-# TTS playback (Bailian CosyVoice writes an audio file, then plays it):
-#   Linux  : install `ffmpeg` (ffplay) or `mpv`
-#   macOS  : `afplay` ships with the OS; ffplay/mpv also work
-#   Windows: PowerShell MediaPlayer is used automatically
+# TTS playback uses QtMultimedia (QMediaPlayer/QAudioOutput). Linux needs a
+# working PipeWire or PulseAudio backend. Legacy direct provider calls can
+# still use ffplay/mpv/afplay/PowerShell playback where available.
 #
 # Local offline TTS (tts_provider = system_say / auto):
 #   macOS  : `say` ships with the OS

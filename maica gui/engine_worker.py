@@ -52,6 +52,8 @@ _UPDATABLE_FIELDS: dict[str, Any] = {
     'tts_enabled': bool, 'tts_provider': str, 'tts_bailian_model': str,
     'tts_bailian_voice': str, 'tts_bailian_format': str, 'tts_playback_backend': str,
     'tts_bailian_instruction': str, 'stt_provider': str, 'stt_language': str, 'stt_timeout': int,
+    'speech_streaming_enabled': bool, 'speech_max_concurrency': int,
+    'speech_queue_behavior': str, 'lip_sync_sensitivity': float,
     'embedding_enabled': bool, 'memory_embedding_enabled': bool,
     'embedding_service_enabled': bool, 'embedding_service_autostart': bool,
     'embedding_service_host': str, 'embedding_service_port': int, 'embedding_service_timeout': int,

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.12.3.
+"""MAICA GUI v0.12.4.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -50,7 +50,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.12.3'
+APP_VERSION = '0.12.4'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -63,8 +63,9 @@ from assets import AssetManager, normalize_emotion  # noqa: E402
 from avatar_controller import AvatarController  # noqa: E402
 from diagnostics import collect_report  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
+from speech import SpeechController  # noqa: E402
 from stt import create_stt  # noqa: E402
-from tts import create_tts, redact_secret  # noqa: E402
+from tts import redact_secret  # noqa: E402
 
 try:
     from monika_pet import PetWindow  # noqa: E402
@@ -467,6 +468,14 @@ class SettingsDialog(QDialog):
         self.tts_playback_backend = QComboBox()
         self.tts_playback_backend.addItems(TTS_PLAYBACK_BACKENDS)
         self.tts_instruction = QLineEdit()
+        self.speech_streaming_enabled = QCheckBox('Synthesize safe sentences while the reply is streaming')
+        self.speech_queue_behavior = QComboBox()
+        self.speech_queue_behavior.addItems(('replace', 'queue', 'interrupt'))
+        self.speech_max_concurrency = QSpinBox()
+        self.speech_max_concurrency.setRange(1, 4)
+        self.lip_sync_sensitivity = QDoubleSpinBox()
+        self.lip_sync_sensitivity.setRange(0.1, 4.0)
+        self.lip_sync_sensitivity.setSingleStep(0.1)
         self.stt_provider = QComboBox()
         self.stt_provider.addItems(STT_PROVIDERS)
         self.stt_language = QComboBox()
@@ -574,6 +583,10 @@ class SettingsDialog(QDialog):
         voice_form.addRow('Bailian format', self.tts_format)
         voice_form.addRow('TTS playback', self.tts_playback_backend)
         voice_form.addRow('Bailian instruction', self.tts_instruction)
+        voice_form.addRow('', self.speech_streaming_enabled)
+        voice_form.addRow('Speech queue', self.speech_queue_behavior)
+        voice_form.addRow('Synthesis workers', self.speech_max_concurrency)
+        voice_form.addRow('Lip-sync sensitivity', self.lip_sync_sensitivity)
         voice_form.addRow('STT provider', self.stt_provider)
         voice_form.addRow('STT language', self.stt_language)
         voice_form.addRow('STT timeout', self.stt_timeout)
@@ -668,6 +681,10 @@ class SettingsDialog(QDialog):
         self._set_combo(self.tts_format, str(config.get('tts_bailian_format') or 'mp3'))
         self._set_combo(self.tts_playback_backend, str(config.get('tts_playback_backend') or 'auto'))
         self.tts_instruction.setText(str(config.get('tts_bailian_instruction') or ''))
+        self.speech_streaming_enabled.setChecked(bool(config.get('speech_streaming_enabled', True)))
+        self._set_combo(self.speech_queue_behavior, str(config.get('speech_queue_behavior') or 'replace'))
+        self.speech_max_concurrency.setValue(int(config.get('speech_max_concurrency') or 2))
+        self.lip_sync_sensitivity.setValue(float(config.get('lip_sync_sensitivity') or 1.0))
         self._set_combo(self.stt_provider, str(config.get('stt_provider') or 'auto'))
         self._set_combo(self.stt_language, str(config.get('stt_language') or config.get('language') or 'en'))
         self.stt_timeout.setValue(int(config.get('stt_timeout') or 8))
@@ -817,6 +834,10 @@ class SettingsDialog(QDialog):
             'tts_bailian_format': self.tts_format.currentText(),
             'tts_playback_backend': self.tts_playback_backend.currentText(),
             'tts_bailian_instruction': self.tts_instruction.text().strip(),
+            'speech_streaming_enabled': self.speech_streaming_enabled.isChecked(),
+            'speech_queue_behavior': self.speech_queue_behavior.currentText(),
+            'speech_max_concurrency': self.speech_max_concurrency.value(),
+            'lip_sync_sensitivity': self.lip_sync_sensitivity.value(),
             'stt_provider': self.stt_provider.currentText(),
             'stt_language': self.stt_language.currentText(),
             'stt_timeout': self.stt_timeout.value(),
@@ -1170,7 +1191,8 @@ class MainWindow(QMainWindow):
         self.thread = QThread(self)
         self.worker = GuiEngineWorker(config_path=config_path, db_path=db_path, app_dir=ROOT_DIR / 'maica cli')
         self.worker.moveToThread(self.thread)
-        self.tts = create_tts({})
+        self.speech = SpeechController({}, self)
+        self.speech.event.connect(self._handle_speech_event)
         self.stt = create_stt({})
         self.tts_enabled = False
         self.last_tts_error = ''
@@ -1379,7 +1401,7 @@ class MainWindow(QMainWindow):
         self.set_emotion(self.status_label.property('emotion') or 'smile')
 
     def closeEvent(self, event: Any) -> None:
-        self.tts.stop()
+        self.speech.close()
         self.idle_timer.stop()
         self.typing_timer.stop()
         self.avatar_timer.stop()
@@ -1434,12 +1456,19 @@ class MainWindow(QMainWindow):
         if kind == 'turn.started':
             self.active_turn_id = turn_id
             self.active_event_sequence = sequence
+            if self.tts_enabled:
+                self.speech.begin(turn_id)
             return
         if not turn_id or turn_id != self.active_turn_id or sequence <= self.active_event_sequence:
             return
         self.active_event_sequence = sequence
         if kind == 'text.delta':
-            self._handle_stream_chunk(str(payload.get('text') or ''))
+            delta = str(payload.get('text') or '')
+            self._handle_stream_chunk(delta)
+            if self.tts_enabled:
+                self.speech.append_text(turn_id, delta)
+        elif kind == 'dialogue.final' and self.tts_enabled:
+            self.speech.finish(turn_id, str(payload.get('text') or ''))
         elif kind == 'emotion.changed':
             self.set_emotion(str(payload.get('emotion') or 'neutral'))
         elif kind == 'action.requested' and self.avatar_controller is not None:
@@ -1447,8 +1476,30 @@ class MainWindow(QMainWindow):
         elif kind == 'tool.started':
             self.status_label.setText(f"Monika is using {payload.get('tool', 'a tool')}...")
         elif kind == 'turn.cancelled':
+            self.speech.cancel('turn cancelled')
             self.send_button.setEnabled(False)
             self.send_button.setText('Stopping...')
+
+    def _handle_speech_event(self, event: dict[str, Any]) -> None:
+        kind = str(event.get('kind') or '')
+        payload = event.get('payload') if isinstance(event.get('payload'), dict) else {}
+        if kind == 'audio.started':
+            if self.avatar_controller is not None:
+                self.avatar_controller.set_speaking(True)
+        elif kind == 'audio.amplitude':
+            if self.avatar_controller is not None:
+                self.avatar_controller.set_mouth_open(float(payload.get('value') or 0.0))
+        elif kind == 'audio.finished':
+            if self.avatar_controller is not None:
+                self.avatar_controller.set_mouth_open(0.0)
+        elif kind in {'speech.finished', 'speech.cancelled'}:
+            self._stop_avatar_speaking()
+        elif kind == 'speech.failed':
+            self._stop_avatar_speaking()
+            error = redact_secret(str(payload.get('error') or 'TTS failed'))
+            if error and error != self.last_tts_error:
+                self.last_tts_error = error
+                self.add_system_message(f'TTS error: {error}')
 
     def _finish_streaming_message(self, emotion: str, response_time: Any = '', final_text: str | None = None) -> None:
         if self._stream_bubble is not None:
@@ -1542,17 +1593,10 @@ class MainWindow(QMainWindow):
         if self.avatar_controller is not None:
             self.avatar_controller.tick()
 
-    def _estimate_tts_duration_ms(self, text: str) -> int:
-        compact = ''.join(str(text or '').split())
-        # Roughly 11 CJK chars/sec or 16 Latin chars/sec, clamped for UI safety.
-        cjk = sum(1 for ch in compact if '\u4e00' <= ch <= '\u9fff')
-        latin = max(0, len(compact) - cjk)
-        seconds = cjk / 11.0 + latin / 16.0 + 1.2
-        return max(2200, min(30000, int(seconds * 1000)))
-
     def _stop_avatar_speaking(self) -> None:
         if self.avatar_controller is not None:
             self.avatar_controller.set_speaking(False)
+            self.avatar_controller.set_mouth_open(0.0)
 
     def visual_state_from_result(self, result: dict[str, Any]) -> dict[str, Any]:
         emotion = str(result.get('emotion') or 'neutral')
@@ -1611,7 +1655,7 @@ class MainWindow(QMainWindow):
         self.current_config = dict(config)
         self.reconnect_avatar_backend()
         self.refresh_background()
-        self.tts = create_tts(config)
+        self.speech.configure(config)
         self.stt = create_stt(config)
         self.tts_enabled = bool(config.get('tts_enabled', False))
         self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
@@ -1626,12 +1670,12 @@ class MainWindow(QMainWindow):
         self.tts_enabled = not self.tts_enabled
         self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
         if not self.tts_enabled:
-            self.tts.stop()
+            self.speech.cancel('TTS disabled')
             self._stop_avatar_speaking()
         self.add_system_message('TTS enabled.' if self.tts_enabled else 'TTS disabled.')
 
     def stop_tts(self) -> None:
-        self.tts.stop()
+        self.speech.cancel('stopped by user')
         self._stop_avatar_speaking()
 
     def listen_once(self) -> None:
@@ -1783,7 +1827,7 @@ class MainWindow(QMainWindow):
         if isinstance(config, dict):
             merge_runtime_config(self.current_config, config)
         if payload.get('action') == 'save_config':
-            self.tts = create_tts(self.current_config)
+            self.speech.configure(self.current_config)
             self.stt = create_stt(self.current_config)
             self.reconnect_avatar_backend()
             self.tts_enabled = bool(self.current_config.get('tts_enabled', False))
@@ -1877,14 +1921,12 @@ class MainWindow(QMainWindow):
         if self.pet_window is not None and self.pet_window.isVisible() and reply_text:
             self.pet_window.show_line(reply_text, emotion)
         self.update_debug_panel(result)
-        if self.tts_enabled and reply_text:
-            self.add_system_message('TTS is synthesizing/playing...')
-            if self.avatar_controller is not None:
-                self.avatar_controller.set_speaking(True)
-            self.tts.speak(reply_text)
-            QTimer.singleShot(self._estimate_tts_duration_ms(reply_text), self._stop_avatar_speaking)
-            QTimer.singleShot(1800, self.report_tts_error_if_any)
-            QTimer.singleShot(6000, self.report_tts_error_if_any)
+        # Runtime dialogue events own normal speech. Keep a fallback for
+        # non-engine result producers that do not have a structured turn id.
+        if self.tts_enabled and reply_text and not result_turn_id:
+            fallback_turn = f'legacy-{dt.datetime.now().timestamp()}'
+            self.speech.begin(fallback_turn)
+            self.speech.finish(fallback_turn, reply_text)
         for notice in result.get('mtrigger_notices') or []:
             self.chat_log.add_notice(str(notice))
 
@@ -1946,14 +1988,6 @@ class MainWindow(QMainWindow):
             self.add_system_message('Idle proactive talk is starting...')
             self.set_busy(True)
             self.spire_requested.emit('')
-
-    def report_tts_error_if_any(self) -> None:
-        error = str(getattr(self.tts, 'last_error', '') or '').strip()
-        if error and error != self.last_tts_error:
-            self.last_tts_error = error
-            self._stop_avatar_speaking()
-            self.add_system_message(f'TTS error: {error}')
-
 
 # --- Design tokens: rose-pink x soft-light theme ----------------------------
 # Centralized so re-skinning is a single-place edit.

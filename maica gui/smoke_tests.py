@@ -14,6 +14,7 @@ import py_compile
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -40,6 +41,7 @@ def compile_python() -> None:
         GUI_DIR / 'diagnostics.py',
         GUI_DIR / 'package_audit.py',
         GUI_DIR / 'stt.py',
+        GUI_DIR / 'speech.py',
         GUI_DIR / 'tts.py',
         GUI_DIR / 'maica_gui.spec',
         CLI_DIR / 'config_defaults.py',
@@ -240,6 +242,128 @@ def test_text_helpers() -> None:
     report = collect_report()
     output = json.dumps(report, ensure_ascii=True)
     check('sk-' not in output, 'diagnostics report leaked a likely API key')
+
+
+def test_speech_pipeline() -> None:
+    sys.path.insert(0, str(GUI_DIR))
+    from PySide6.QtCore import QCoreApplication, QObject, Signal
+
+    from speech import SentenceSegmenter, SpeechController
+
+    app = QCoreApplication.instance() or QCoreApplication([])
+    segmenter = SentenceSegmenter()
+    check(segmenter.feed('你好。How are') == ['你好。'], 'Chinese sentence boundary failed')
+    check(
+        segmenter.feed(' you? One more... Tail', final=True) == ['How are you?', 'One more...', 'Tail'],
+        'English sentence boundary or final flush failed',
+    )
+
+    class FakePlayer(QObject):
+        started = Signal(str)
+        amplitude = Signal(float)
+        finished = Signal(str)
+        failed = Signal(str, str)
+
+        def __init__(self, auto_finish: bool = True) -> None:
+            super().__init__()
+            self.played: list[str] = []
+            self.pending_paths: list[str] = []
+            self.sensitivity = 1.0
+            self.auto_finish = auto_finish
+
+        def configure(self, sensitivity: float) -> None:
+            self.sensitivity = float(sensitivity)
+
+        def play(self, path: str | Path) -> None:
+            resolved = str(path)
+            self.played.append(Path(resolved).read_text(encoding='utf-8'))
+            self.pending_paths.append(resolved)
+            self.started.emit(resolved)
+            self.amplitude.emit(0.5)
+            if self.auto_finish:
+                self.finish_next()
+
+        def finish_next(self) -> None:
+            if self.pending_paths:
+                self.finished.emit(self.pending_paths.pop(0))
+
+        def stop(self, emit_finished: bool = False) -> None:
+            return
+
+        def close(self) -> None:
+            return
+
+    with tempfile.TemporaryDirectory(prefix='maica-speech-smoke-') as temp_dir:
+        output_dir = Path(temp_dir)
+
+        class FakeProvider:
+            def synthesize_file(self, text: str, cancel_token=None) -> Path:
+                # Force completion out of order; SpeechController must restore
+                # source order before playback.
+                time.sleep(0.06 if text.startswith('First') else 0.01)
+                if cancel_token is not None:
+                    cancel_token.check()
+                path = output_dir / f'{abs(hash(text))}.txt'
+                path.write_text(text, encoding='utf-8')
+                return path
+
+        player = FakePlayer()
+        events: list[dict[str, Any]] = []
+        controller = SpeechController(
+            {
+                'language': 'en',
+                'speech_streaming_enabled': True,
+                'speech_max_concurrency': 2,
+                'lip_sync_sensitivity': 1.0,
+            },
+            provider_factory=lambda _config: FakeProvider(),
+            player=player,
+        )
+        controller.event.connect(events.append)
+        controller.begin('speech-turn')
+        controller.append_text('speech-turn', '[smile] First sentence. Second sentence!')
+        controller.finish('speech-turn', 'First sentence. Second sentence!')
+        deadline = time.monotonic() + 3.0
+        while time.monotonic() < deadline and not any(
+            event.get('kind') == 'speech.finished' for event in events
+        ):
+            app.processEvents()
+            time.sleep(0.01)
+        check(player.played == ['First sentence.', 'Second sentence!'], 'speech playback order changed')
+        kinds = [event.get('kind') for event in events]
+        check(kinds[0] == 'speech.started' and kinds[-1] == 'speech.finished', 'speech lifecycle is incomplete')
+        amplitude_events = [event for event in events if event.get('kind') == 'audio.amplitude']
+        check(amplitude_events and amplitude_events[0]['payload'].get('turn_id') == 'speech-turn',
+              'audio amplitude must retain its turn id')
+        controller.configure({'language': 'en', 'speech_max_concurrency': 1, 'lip_sync_sensitivity': 1.7})
+        check(controller._max_workers == 1, 'speech concurrency did not apply immediately')
+        check(abs(player.sensitivity - 1.7) < 0.001, 'lip-sync sensitivity did not apply immediately')
+        controller.close()
+
+        queue_player = FakePlayer(auto_finish=False)
+        queued = SpeechController(
+            {'language': 'en', 'speech_queue_behavior': 'queue', 'speech_max_concurrency': 2},
+            provider_factory=lambda _config: FakeProvider(),
+            player=queue_player,
+        )
+        queued.begin('first')
+        queued.finish('first', 'First queued reply.')
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and not queue_player.played:
+            app.processEvents()
+            time.sleep(0.01)
+        queued.begin('second')
+        queued.finish('second', 'Second queued reply.')
+        check(queue_player.played == ['First queued reply.'], 'queue mode interrupted active speech')
+        queue_player.finish_next()
+        deadline = time.monotonic() + 2.0
+        while time.monotonic() < deadline and len(queue_player.played) < 2:
+            app.processEvents()
+            time.sleep(0.01)
+        check(queue_player.played == ['First queued reply.', 'Second queued reply.'],
+              'queue mode did not promote the next reply in order')
+        queue_player.finish_next()
+        queued.close()
 
 
 def test_engine_fake_chat() -> None:
@@ -1166,6 +1290,8 @@ def main() -> int:
     print('avatar_helpers ok')
     test_text_helpers()
     print('text_helpers ok')
+    test_speech_pipeline()
+    print('speech_pipeline ok')
     test_engine_fake_chat()
     print('engine_fake_chat ok')
     test_engine_fake_stream()

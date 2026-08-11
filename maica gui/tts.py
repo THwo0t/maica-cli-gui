@@ -143,6 +143,54 @@ class WindowsSapiTTS:
                 pass
             self.process = None
 
+    def synthesize_file(self, text: str, cancel_token: Any | None = None) -> Path:
+        clean_text = clean_tts_text(text)
+        if not clean_text:
+            raise RuntimeError('TTS text is empty after metadata cleanup')
+        if platform.system().lower() != 'windows':
+            raise RuntimeError('Windows SAPI TTS is only available on Windows')
+        TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        target = TTS_CACHE_DIR / f'sapi-{uuid.uuid4()}.wav'
+        rate = max(-10, min(10, int(self.config.get('tts_rate', 0) or 0)))
+        volume = max(0, min(100, int(self.config.get('tts_volume', 90) or 90)))
+        voice = str(self.config.get('tts_voice') or '').strip()
+        voice_line = f"$s.SelectVoice('{voice.replace(chr(39), chr(39) * 2)}');" if voice else ''
+        safe_path = str(target).replace("'", "''")
+        script = (
+            "Add-Type -AssemblyName System.Speech;"
+            "$text=[Console]::In.ReadToEnd();"
+            "$s=New-Object System.Speech.Synthesis.SpeechSynthesizer;"
+            f"$s.Rate={rate};$s.Volume={volume};{voice_line}"
+            f"$s.SetOutputToWaveFile('{safe_path}');"
+            "$s.Speak($text);$s.Dispose();"
+        )
+        creation_flags = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+        process = subprocess.Popen(
+            ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=creation_flags,
+        )
+        with self.lock:
+            self.process = process
+        if cancel_token is not None:
+            cancel_token.add_cancel_callback(self.stop)
+        try:
+            _stdout, stderr = process.communicate(clean_text)
+            if cancel_token is not None:
+                cancel_token.check()
+            if process.returncode not in (0, None) or not target.exists():
+                raise RuntimeError(f'Windows SAPI synthesis failed: {(stderr or "").strip() or process.returncode}')
+            return target
+        finally:
+            if cancel_token is not None:
+                cancel_token.remove_cancel_callback(self.stop)
+            with self.lock:
+                if self.process is process:
+                    self.process = None
+
     def _speak_blocking(self, text: str) -> None:
         rate = int(self.config.get('tts_rate', 0) or 0)
         volume = int(self.config.get('tts_volume', 90) or 90)
@@ -358,6 +406,26 @@ class BailianCosyVoiceTTS:
         thread = threading.Thread(target=self._speak_blocking, args=(clean_text, generation), daemon=True)
         thread.start()
 
+    def synthesize_file(self, text: str, cancel_token: Any | None = None) -> Path:
+        clean_text = self._clean_text(text)
+        if not clean_text:
+            raise RuntimeError('TTS text is empty after metadata cleanup')
+        with self.lock:
+            self.generation += 1
+            generation = self.generation
+        if cancel_token is not None:
+            cancel_token.add_cancel_callback(self.stop)
+        try:
+            path = self._synthesize_to_audio(clean_text, generation)
+            if cancel_token is not None:
+                cancel_token.check()
+            if path is None:
+                raise RuntimeError('Bailian CosyVoice returned no audio')
+            return path
+        finally:
+            if cancel_token is not None:
+                cancel_token.remove_cancel_callback(self.stop)
+
     def stop(self) -> None:
         with self.lock:
             self.generation += 1
@@ -454,7 +522,7 @@ class BailianCosyVoiceTTS:
                 return None
 
             TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            audio_path = TTS_CACHE_DIR / f'last_tts.{audio_format}'
+            audio_path = TTS_CACHE_DIR / f'cosyvoice-{task_id}.{audio_format}'
             audio_path.write_bytes(b''.join(audio_chunks))
             return audio_path
         finally:
@@ -607,6 +675,41 @@ class SystemSayTTS:
         except Exception:
             pass
 
+    def synthesize_file(self, text: str, cancel_token: Any | None = None) -> Path:
+        clean_text = clean_tts_text(text)
+        if not clean_text:
+            raise RuntimeError('TTS text is empty after metadata cleanup')
+        TTS_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        system = platform.system().lower()
+        if system == 'darwin' and shutil.which('say'):
+            target = TTS_CACHE_DIR / f'say-{uuid.uuid4()}.aiff'
+            rate = max(120, min(360, 180 + int(self.config.get('tts_rate', 0) or 0) * 12))
+            command = [str(shutil.which('say')), '-r', str(rate), '-o', str(target), clean_text]
+        else:
+            exe = shutil.which('espeak-ng') or shutil.which('espeak')
+            if not exe:
+                raise RuntimeError('File-based system TTS needs say, espeak-ng, or espeak')
+            target = TTS_CACHE_DIR / f'espeak-{uuid.uuid4()}.wav'
+            command = [exe, '-w', str(target), clean_text]
+        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        with self.lock:
+            self.process = process
+        if cancel_token is not None:
+            cancel_token.add_cancel_callback(self.stop)
+        try:
+            _stdout, stderr = process.communicate()
+            if cancel_token is not None:
+                cancel_token.check()
+            if process.returncode not in (0, None) or not target.exists():
+                raise RuntimeError(f'system TTS synthesis failed: {(stderr or "").strip() or process.returncode}')
+            return target
+        finally:
+            if cancel_token is not None:
+                cancel_token.remove_cancel_callback(self.stop)
+            with self.lock:
+                if self.process is process:
+                    self.process = None
+
     def _speak_blocking(self, command: list[str]) -> None:
         try:
             process = subprocess.Popen(
@@ -658,6 +761,9 @@ class NullTTS:
 
     def stop(self) -> None:
         return
+
+    def synthesize_file(self, text: str, cancel_token: Any | None = None) -> Path:
+        raise RuntimeError('TTS is disabled')
 
 
 def resolve_tts_provider(config: dict[str, Any]) -> str:
