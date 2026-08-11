@@ -18,6 +18,7 @@ from PySide6.QtMultimedia import (
     QAudioBufferOutput,
     QAudioFormat,
     QAudioOutput,
+    QMediaDevices,
     QMediaPlayer,
 )
 
@@ -29,6 +30,14 @@ if str(CLI_DIR) not in sys.path:
 from language_runtime import conforms_to_language  # noqa: E402
 from runtime_events import CancellationToken, TurnCancelled  # noqa: E402
 from tts import clean_tts_text, compact_tts_error, create_tts  # noqa: E402
+
+
+def available_audio_output_names() -> list[str]:
+    """Return stable user-facing Qt audio output names without raising."""
+    try:
+        return [device.description() for device in QMediaDevices.audioOutputs() if device.description()]
+    except Exception:
+        return []
 
 
 @dataclass(frozen=True)
@@ -76,7 +85,12 @@ class QtAudioPlayer(QObject):
     finished = Signal(str)
     failed = Signal(str, str)
 
-    def __init__(self, sensitivity: float = 1.0, parent: QObject | None = None) -> None:
+    def __init__(
+        self,
+        sensitivity: float = 1.0,
+        parent: QObject | None = None,
+        output_device: str = '',
+    ) -> None:
         super().__init__(parent)
         # Audio backends can block while probing PipeWire/PulseAudio. Delay all
         # multimedia objects until the first real playback request.
@@ -84,12 +98,18 @@ class QtAudioPlayer(QObject):
         self.output: QAudioOutput | None = None
         self.buffer_output: QAudioBufferOutput | None = None
         self.sensitivity = max(0.1, float(sensitivity or 1.0))
+        self.output_device = str(output_device or '').strip()
         self.current_path = ''
         self._started = False
         self._smooth_level = 0.0
 
-    def configure(self, sensitivity: float) -> None:
+    def configure(self, sensitivity: float, output_device: str = '') -> None:
         self.sensitivity = max(0.1, float(sensitivity or 1.0))
+        selected = str(output_device or '').strip()
+        if selected != self.output_device:
+            self.output_device = selected
+            self.stop()
+            self._release_backend()
 
     def play(self, path: str | Path) -> None:
         self.stop(emit_finished=False)
@@ -116,6 +136,9 @@ class QtAudioPlayer(QObject):
 
     def close(self) -> None:
         self.stop()
+        self._release_backend()
+
+    def _release_backend(self) -> None:
         if self.player is not None:
             self.player.setSource(QUrl())
             self.player.deleteLater()
@@ -131,7 +154,8 @@ class QtAudioPlayer(QObject):
         if self.player is not None:
             return
         self.player = QMediaPlayer(self)
-        self.output = QAudioOutput(self)
+        device = self._selected_device()
+        self.output = QAudioOutput(device, self) if device is not None else QAudioOutput(self)
         self.buffer_output = QAudioBufferOutput(self)
         self.player.setAudioOutput(self.output)
         self.player.setAudioBufferOutput(self.buffer_output)
@@ -139,6 +163,17 @@ class QtAudioPlayer(QObject):
         self.player.mediaStatusChanged.connect(self._on_media_status)
         self.player.errorOccurred.connect(self._on_error)
         self.buffer_output.audioBufferReceived.connect(self._on_buffer)
+
+    def _selected_device(self) -> Any | None:
+        if not self.output_device:
+            return None
+        try:
+            for device in QMediaDevices.audioOutputs():
+                if device.description() == self.output_device:
+                    return device
+        except Exception:
+            return None
+        return None
 
     def _on_playback_state(self, state: QMediaPlayer.PlaybackState) -> None:
         if state == QMediaPlayer.PlaybackState.PlayingState and self.current_path and not self._started:
@@ -249,7 +284,11 @@ class SpeechController(QObject):
         super().__init__(parent)
         self.config = dict(config or {})
         self._provider_factory = provider_factory
-        self.player = player or QtAudioPlayer(float(self.config.get('lip_sync_sensitivity', 1.0)), self)
+        self.player = player or QtAudioPlayer(
+            float(self.config.get('lip_sync_sensitivity', 1.0)),
+            self,
+            str(self.config.get('audio_output_device') or ''),
+        )
         self.player.started.connect(self._on_audio_started)
         self.player.amplitude.connect(self._on_audio_amplitude)
         self.player.finished.connect(self._on_audio_finished)
@@ -264,14 +303,23 @@ class SpeechController(QObject):
 
     def configure(self, config: dict[str, Any]) -> None:
         next_workers = self._configured_workers(config)
+        previous_device = str(self.config.get('audio_output_device') or '')
+        next_device = str(config.get('audio_output_device') or '')
         if next_workers != self._max_workers:
             self.cancel('speech concurrency changed', quiet=True)
             previous = self._executor
             self._max_workers = next_workers
             self._executor = self._new_executor(next_workers)
             previous.shutdown(wait=False, cancel_futures=True)
+        elif previous_device != next_device:
+            self.cancel('audio output changed', quiet=True)
         self.config = dict(config)
-        self.player.configure(float(self.config.get('lip_sync_sensitivity', 1.0)))
+        sensitivity = float(self.config.get('lip_sync_sensitivity', 1.0))
+        try:
+            self.player.configure(sensitivity, next_device)
+        except TypeError:
+            # Compatibility with existing third-party and deterministic fake players.
+            self.player.configure(sensitivity)
 
     def begin(self, turn_id: str) -> None:
         turn_id = str(turn_id)

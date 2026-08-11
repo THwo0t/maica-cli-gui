@@ -184,6 +184,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "speech_max_concurrency": 2,
     "speech_queue_behavior": "replace",
     "lip_sync_sensitivity": 1.0,
+    "audio_output_device": "",
     "tts_provider": "auto",
     "tts_voice": "",
     "tts_auto_play": True,

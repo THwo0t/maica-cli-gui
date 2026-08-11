@@ -3,6 +3,12 @@
 The prebuilt embedded Live2D renderer contains the following MIT-licensed
 JavaScript libraries. Live2D Cubism Core and avatar models are not included.
 
+The desktop application also uses PySide6/Qt under their respective licensing
+terms. No AIRI source code is copied into this renderer or the Python runtime.
+
+Live2D and Cubism are trademarks of Live2D Inc. Cubism Core and user-supplied
+models are not redistributed by MAICA and remain subject to their own terms.
+
 ## PixiJS
 
 Copyright (c) 2013-2017 Mathew Groves, Chad Engler

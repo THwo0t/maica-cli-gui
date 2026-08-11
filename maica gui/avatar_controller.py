@@ -65,6 +65,9 @@ class AvatarController:
             int(config.get('live2d_render_fps', 60) or 60),
             bool(config.get('live2d_eye_tracking', True)),
             bool(config.get('live2d_transparent_background', True)),
+            str(config.get('live2d_expression_map_path') or ''),
+            int(config.get('live2d_mouth_attack_ms', 60) or 60),
+            int(config.get('live2d_mouth_release_ms', 120) or 120),
         )
         if signature == self._signature and not force:
             return

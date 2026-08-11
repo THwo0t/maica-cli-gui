@@ -30,6 +30,11 @@ SECRET_PATTERNS = [
     re.compile(rb'cosyvoice-v3\.5-plus-bailian-[A-Za-z0-9-]+'),
     re.compile(rb'gho_[A-Za-z0-9_]+'),
 ]
+REQUIRED_RUNTIME_SUFFIXES = {
+    'maica gui/live2d_web/dist/index.html',
+    'maica gui/live2d_expression_map.json',
+    'maica gui/live2d_web/THIRD_PARTY_NOTICES.md',
+}
 
 
 def is_blocked_path(path: Path, root: Path) -> str:
@@ -76,12 +81,30 @@ def audit(root: Path) -> list[str]:
     return findings
 
 
+def audit_runtime_files(root: Path) -> list[str]:
+    files = {
+        path.relative_to(root).as_posix()
+        for path in root.rglob('*')
+        if path.is_file()
+    }
+    findings: list[str] = []
+    for suffix in sorted(REQUIRED_RUNTIME_SUFFIXES):
+        if not any(path == suffix or path.endswith('/' + suffix) for path in files):
+            findings.append(f'missing packaged runtime file: {suffix}')
+    if not any('/maica gui/live2d_web/dist/assets/' in '/' + path and path.endswith('.js') for path in files):
+        findings.append('missing packaged Live2D JavaScript bundle')
+    return findings
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Audit MAICA GUI package output')
     parser.add_argument('path', nargs='?', default='dist/maica-gui')
+    parser.add_argument('--require-runtime', action='store_true')
     args = parser.parse_args()
     root = Path(args.path).resolve()
     findings = audit(root)
+    if args.require_runtime:
+        findings.extend(audit_runtime_files(root))
     if findings:
         print('package audit failed:')
         for finding in findings:

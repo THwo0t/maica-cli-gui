@@ -61,7 +61,12 @@ a = Analysis(
     pathex=[str(GUI_DIR), str(CLI_DIR)],
     binaries=[],
     datas=datas,
-    hiddenimports=[],
+    hiddenimports=[
+        'PySide6.QtMultimedia',
+        'PySide6.QtWebChannel',
+        'PySide6.QtWebEngineCore',
+        'PySide6.QtWebEngineWidgets',
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

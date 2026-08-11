@@ -1,4 +1,4 @@
-# MAICA GUI v0.12.6
+# MAICA GUI v0.13.0
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -64,9 +64,11 @@ assets.
 - MTrigger notices are shown in the chat log.
 - Windows SAPI TTS and Aliyun Bailian CosyVoice TTS.
 - Ordered Speech Sessions with sentence-level synthesis and real Qt playback lifecycle events.
+- Selectable Qt audio output device with immediate Apply behavior.
 - Live RMS audio amplitude drives avatar mouth state; no text-length playback estimate is used.
 - Persistent background engine worker, so GUI no longer rebuilds the engine every turn.
 - Structured per-turn runtime events for text, metadata, tools, completion, failure, and cancellation.
+- Dedicated dialogue and runtime-settings controllers reject stale generations and route hot updates.
 - The Send button becomes Stop while a turn is running; cancelled or stale turns cannot update the GUI.
 - Data Manager dialog for profile, nicknames, affection, memories, facts, and safe debug snapshots.
 - Settings dialog for common non-secret runtime options.
@@ -123,6 +125,10 @@ Cubism Core are never included in Git commits, Releases, or user-data exports.
 `auto` tries a valid embedded model first, then VTube Studio, and always retains
 the PNG avatar as the final fallback.
 
+If Chromium's renderer process exits, explicit `embedded_live2d` mode reloads
+the page once. `auto` mode immediately falls back to VTube Studio and then PNG.
+The chat engine, database, and history remain in their separate Python runtime.
+
 ### Expressions, motions, and lip sync
 
 The renderer maps MAICA's standard emotions to model-specific expression names
@@ -138,6 +144,9 @@ jitter and the old text-duration estimate. Cubism's own idle motion, breathing,
 physics, and blink behavior remain active. Mouse eye tracking is optional, and
 model hit areas produce local avatar reactions without receiving file-tool or
 agent permissions.
+
+Changing a model, Core path, expression map, audio output, or lip-sync setting
+and clicking Save applies it immediately. The main GUI does not need a restart.
 
 ## TTS
 

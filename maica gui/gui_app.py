@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.12.6.
+"""MAICA GUI v0.13.0.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -51,7 +51,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.12.6'
+APP_VERSION = '0.13.0'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -64,9 +64,11 @@ from assets import AssetManager, normalize_emotion  # noqa: E402
 from avatar_controller import AvatarController  # noqa: E402
 from avatar_mapping_dialog import AvatarMappingDialog  # noqa: E402
 from diagnostics import collect_report  # noqa: E402
+from dialogue_controller import DialogueEventController  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
 from live2d_model import Live2DModelError, import_live2d_zip, validate_live2d_model  # noqa: E402
-from speech import SpeechController  # noqa: E402
+from runtime_settings import RuntimeSettingsController, merge_runtime_config  # noqa: E402
+from speech import SpeechController, available_audio_output_names  # noqa: E402
 from stt import create_stt  # noqa: E402
 from tts import redact_secret  # noqa: E402
 
@@ -87,20 +89,6 @@ TTS_PLAYBACK_BACKENDS = ('auto', 'ffplay', 'mpv', 'paplay', 'aplay', 'afplay', '
 STT_PROVIDERS = ('auto', 'windows_speech', 'bailian_paraformer', 'off')
 BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
 AVATAR_BACKENDS = ('png', 'embedded_live2d', 'vtube_studio', 'auto')
-SECRET_CONFIG_MARKERS = ('key', 'token', 'secret', 'password')
-
-
-def _is_secret_config_key(key: str) -> bool:
-    lowered = str(key or '').lower()
-    return any(marker in lowered for marker in SECRET_CONFIG_MARKERS)
-
-
-def merge_runtime_config(target: dict[str, Any], updates: dict[str, Any]) -> None:
-    """Merge safe GUI snapshots without replacing real secrets by <hidden>."""
-    for key, value in updates.items():
-        if _is_secret_config_key(key) and str(value or '') in {'<hidden>', '***'}:
-            continue
-        target[key] = value
 
 
 def html_escape(text: str) -> str:
@@ -347,12 +335,15 @@ class DataManagerDialog(QDialog):
 
 
 class SettingsDialog(QDialog):
+    audio_devices_ready = Signal(list, str)
+
     def __init__(self, owner: 'MainWindow') -> None:
         super().__init__(owner)
         self.owner = owner
         self.setWindowTitle('MAICA Settings')
         self.resize(560, 520)
         self._build_ui()
+        self.audio_devices_ready.connect(self._render_audio_outputs)
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -486,6 +477,9 @@ class SettingsDialog(QDialog):
         self.lip_sync_sensitivity = QDoubleSpinBox()
         self.lip_sync_sensitivity.setRange(0.1, 4.0)
         self.lip_sync_sensitivity.setSingleStep(0.1)
+        self.audio_output_device = QComboBox()
+        self.audio_output_refresh = QPushButton('Refresh')
+        self.audio_output_refresh.clicked.connect(self._refresh_audio_outputs_async)
         self.stt_provider = QComboBox()
         self.stt_provider.addItems(STT_PROVIDERS)
         self.stt_language = QComboBox()
@@ -627,6 +621,12 @@ class SettingsDialog(QDialog):
         voice_form.addRow('Speech queue', self.speech_queue_behavior)
         voice_form.addRow('Synthesis workers', self.speech_max_concurrency)
         voice_form.addRow('Lip-sync sensitivity', self.lip_sync_sensitivity)
+        audio_box = QWidget()
+        audio_row = QHBoxLayout(audio_box)
+        audio_row.setContentsMargins(0, 0, 0, 0)
+        audio_row.addWidget(self.audio_output_device, 1)
+        audio_row.addWidget(self.audio_output_refresh)
+        voice_form.addRow('Audio output', audio_box)
         voice_form.addRow('STT provider', self.stt_provider)
         voice_form.addRow('STT language', self.stt_language)
         voice_form.addRow('STT timeout', self.stt_timeout)
@@ -731,6 +731,7 @@ class SettingsDialog(QDialog):
         self._set_combo(self.speech_queue_behavior, str(config.get('speech_queue_behavior') or 'replace'))
         self.speech_max_concurrency.setValue(int(config.get('speech_max_concurrency') or 2))
         self.lip_sync_sensitivity.setValue(float(config.get('lip_sync_sensitivity') or 1.0))
+        self._render_audio_outputs([], str(config.get('audio_output_device') or ''))
         self._set_combo(self.stt_provider, str(config.get('stt_provider') or 'auto'))
         self._set_combo(self.stt_language, str(config.get('stt_language') or config.get('language') or 'en'))
         self.stt_timeout.setValue(int(config.get('stt_timeout') or 8))
@@ -942,6 +943,7 @@ class SettingsDialog(QDialog):
             'speech_queue_behavior': self.speech_queue_behavior.currentText(),
             'speech_max_concurrency': self.speech_max_concurrency.value(),
             'lip_sync_sensitivity': self.lip_sync_sensitivity.value(),
+            'audio_output_device': str(self.audio_output_device.currentData() or ''),
             'stt_provider': self.stt_provider.currentText(),
             'stt_language': self.stt_language.currentText(),
             'stt_timeout': self.stt_timeout.value(),
@@ -965,6 +967,29 @@ class SettingsDialog(QDialog):
         if new_agent_key:
             updates['agent_api_key'] = new_agent_key
         self.owner.config_save_requested.emit(updates)
+
+    def _refresh_audio_outputs_async(self) -> None:
+        selected = str(self.audio_output_device.currentData() or '')
+        self.audio_output_refresh.setEnabled(False)
+        self.audio_output_refresh.setText('Scanning...')
+
+        def scan() -> None:
+            self.audio_devices_ready.emit(available_audio_output_names(), selected)
+
+        threading.Thread(target=scan, daemon=True, name='maica-audio-devices').start()
+
+    def _render_audio_outputs(self, names: list[str], selected: str) -> None:
+        self.audio_output_device.clear()
+        self.audio_output_device.addItem('System default', '')
+        for name in names:
+            self.audio_output_device.addItem(name, name)
+        if selected and selected not in names:
+            suffix = 'unavailable' if names else 'saved; refresh to verify'
+            self.audio_output_device.addItem(f'{selected} ({suffix})', selected)
+        index = self.audio_output_device.findData(selected)
+        self.audio_output_device.setCurrentIndex(max(0, index))
+        self.audio_output_refresh.setEnabled(True)
+        self.audio_output_refresh.setText('Refresh')
 
 
 EVAL_CATEGORIES = ('greeting', 'return', 'farewell', 'love', 'hug', 'comfort', 'daily', 'memory', 'playful')
@@ -1295,6 +1320,9 @@ class MainWindow(QMainWindow):
         self.thread = QThread(self)
         self.worker = GuiEngineWorker(config_path=config_path, db_path=db_path, app_dir=ROOT_DIR / 'maica cli')
         self.worker.moveToThread(self.thread)
+        self.dialogue = DialogueEventController(self)
+        self.runtime_settings = RuntimeSettingsController(self)
+        self.current_config = self.runtime_settings.config
         self.speech = SpeechController({}, self)
         self.speech.event.connect(self._handle_speech_event)
         self.stt = create_stt({})
@@ -1306,15 +1334,12 @@ class MainWindow(QMainWindow):
         self.eval_dialog: EvalDialog | None = None
         self.pet_window: Any = None
         self.avatar_controller: AvatarController | None = None
-        self.current_config: dict[str, Any] = {}
         self.last_user_activity = dt.datetime.now()
         self.idle_spire_sent = False
         self.idle_timer = QTimer(self)
         self.streaming_active = False
         self.streaming_text = ''
         self._stream_bubble: MessageBubble | None = None
-        self.active_turn_id = ''
-        self.active_event_sequence = 0
         self.startup_greeting_shown = False
         self.idle_timer.setInterval(30_000)
         self.idle_timer.timeout.connect(self.check_idle_spire)
@@ -1341,6 +1366,11 @@ class MainWindow(QMainWindow):
             on_token=self._handle_vts_token,
             on_hit=self._handle_avatar_hit,
         )
+        self.runtime_settings.speech_changed.connect(self._apply_speech_settings)
+        self.runtime_settings.avatar_changed.connect(self._apply_avatar_settings)
+        self.runtime_settings.stt_changed.connect(self._apply_stt_settings)
+        self.runtime_settings.appearance_changed.connect(self._apply_appearance_settings)
+        self.dialogue.event.connect(self._apply_runtime_event)
         self.avatar_timer.start()
         self._connect_worker()
         self.set_emotion('smile')
@@ -1355,7 +1385,7 @@ class MainWindow(QMainWindow):
         self.worker.ready.connect(self._handle_ready)
         self.worker.status.connect(self.add_system_message)
         self.worker.finished.connect(self._handle_result)
-        self.worker.runtime_event.connect(self._handle_runtime_event)
+        self.worker.runtime_event.connect(self.dialogue.accept)
         self.worker.config_ready.connect(self._handle_config_ready)
         self.worker.data_ready.connect(self._handle_data_ready)
         self.worker.pet_action.connect(self._apply_pet_action)
@@ -1511,6 +1541,7 @@ class MainWindow(QMainWindow):
         self.set_emotion(self.status_label.property('emotion') or 'smile')
 
     def closeEvent(self, event: Any) -> None:
+        self.dialogue.close()
         self.speech.close()
         self.idle_timer.stop()
         self.typing_timer.stop()
@@ -1559,19 +1590,17 @@ class MainWindow(QMainWindow):
             self.chat_log._scroll_to_bottom()
 
     def _handle_runtime_event(self, event: dict[str, Any]) -> None:
+        """Compatibility entrypoint used by tests and external GUI adapters."""
+        self.dialogue.accept(event)
+
+    def _apply_runtime_event(self, event: dict[str, Any]) -> None:
         turn_id = str(event.get('turn_id') or '')
         kind = str(event.get('kind') or '')
-        sequence = int(event.get('sequence') or 0)
         payload = event.get('payload') if isinstance(event.get('payload'), dict) else {}
         if kind == 'turn.started':
-            self.active_turn_id = turn_id
-            self.active_event_sequence = sequence
             if self.tts_enabled:
                 self.speech.begin(turn_id)
             return
-        if not turn_id or turn_id != self.active_turn_id or sequence <= self.active_event_sequence:
-            return
-        self.active_event_sequence = sequence
         if kind == 'text.delta':
             delta = str(payload.get('text') or '')
             self._handle_stream_chunk(delta)
@@ -1703,12 +1732,34 @@ class MainWindow(QMainWindow):
 
     def reconnect_avatar_backend(self, overrides: dict[str, Any] | None = None, force: bool = False) -> None:
         if overrides:
-            merge_runtime_config(self.current_config, overrides)
+            self.runtime_settings.apply(overrides, force_avatar=force)
+            return
         if self.avatar_controller is None:
             return
         self.avatar_controller.configure(self.current_config, force=force)
         self.avatar_controller.set_emotion(self.current_emotion)
         self._update_avatar_status_label()
+
+    def _apply_speech_settings(self, config: dict[str, Any]) -> None:
+        self.speech.configure(config)
+        self.tts_enabled = bool(config.get('tts_enabled', False))
+        self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
+        if not self.tts_enabled:
+            self.speech.cancel('TTS disabled by settings', quiet=True)
+            self._stop_avatar_speaking()
+
+    def _apply_avatar_settings(self, config: dict[str, Any], force: bool = False) -> None:
+        if self.avatar_controller is None:
+            return
+        self.avatar_controller.configure(config, force=force)
+        self.avatar_controller.set_emotion(self.current_emotion)
+        self._update_avatar_status_label()
+
+    def _apply_stt_settings(self, config: dict[str, Any]) -> None:
+        self.stt = create_stt(config)
+
+    def _apply_appearance_settings(self, _config: dict[str, Any]) -> None:
+        self.refresh_background()
 
     def _tick_avatar(self) -> None:
         if self.avatar_controller is not None:
@@ -1749,7 +1800,7 @@ class MainWindow(QMainWindow):
         self.send_chat()
 
     def cancel_active_turn(self) -> None:
-        if not self.active_turn_id and self.input_box.isEnabled():
+        if not self.dialogue.active_turn_id and self.input_box.isEnabled():
             return
         self.send_button.setEnabled(False)
         self.send_button.setText('Stopping...')
@@ -1773,13 +1824,7 @@ class MainWindow(QMainWindow):
             self.add_system_message(f'Backend initialization failed: {result.get("error", "unknown error")}')
 
     def _handle_config_ready(self, config: dict[str, Any]) -> None:
-        self.current_config = dict(config)
-        self.reconnect_avatar_backend()
-        self.refresh_background()
-        self.speech.configure(config)
-        self.stt = create_stt(config)
-        self.tts_enabled = bool(config.get('tts_enabled', False))
-        self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
+        self.runtime_settings.apply(config, force_avatar=True, force_all=True)
         provider = str(config.get('tts_provider') or 'auto')
         self.add_system_message(f'TTS provider: {provider} · {"on" if self.tts_enabled else "off"}')
         if self.settings_dialog is not None:
@@ -1946,14 +1991,11 @@ class MainWindow(QMainWindow):
             self.add_system_message(notice)
         config = payload.get('config')
         if isinstance(config, dict):
-            merge_runtime_config(self.current_config, config)
+            self.runtime_settings.apply(
+                config,
+                force_avatar=payload.get('action') == 'save_config',
+            )
         if payload.get('action') == 'save_config':
-            self.speech.configure(self.current_config)
-            self.stt = create_stt(self.current_config)
-            self.reconnect_avatar_backend()
-            self.tts_enabled = bool(self.current_config.get('tts_enabled', False))
-            self.tts_button.setText('TTS: on' if self.tts_enabled else 'TTS: off')
-            self.refresh_background()
             self.add_system_message('Settings applied. New chat requests will use the updated options.')
             if self.settings_dialog is not None:
                 self.settings_dialog.render(self.current_config)
@@ -2005,11 +2047,9 @@ class MainWindow(QMainWindow):
 
     def _handle_result(self, result: dict[str, Any]) -> None:
         result_turn_id = str(result.get('turn_id') or '')
-        if result_turn_id and self.active_turn_id and result_turn_id != self.active_turn_id:
+        if not self.dialogue.accept_result(result):
             return
         self.set_busy(False)
-        self.active_turn_id = ''
-        self.active_event_sequence = 0
         self.last_user_activity = dt.datetime.now()
         if result.get('cancelled'):
             if self.streaming_active:

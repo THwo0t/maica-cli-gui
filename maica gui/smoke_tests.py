@@ -250,6 +250,50 @@ def test_avatar_mapping() -> None:
         check('脸红' in saved.read_text(encoding='utf-8'), 'avatar mapping was not saved as UTF-8')
 
 
+def test_gui_controllers() -> None:
+    sys.path.insert(0, str(GUI_DIR))
+    from PySide6.QtCore import QCoreApplication
+
+    from dialogue_controller import DialogueEventController
+    from runtime_settings import RuntimeSettingsController, merge_runtime_config
+
+    _app = QCoreApplication.instance() or QCoreApplication([])
+    controller = DialogueEventController()
+    accepted: list[dict[str, Any]] = []
+    stale: list[dict[str, Any]] = []
+    controller.event.connect(accepted.append)
+    controller.stale_event.connect(stale.append)
+    controller.accept({'turn_id': 'turn-a', 'sequence': 1, 'kind': 'turn.started', 'payload': {}})
+    controller.accept({'turn_id': 'turn-a', 'sequence': 2, 'kind': 'text.delta', 'payload': {'text': 'A'}})
+    controller.accept({'turn_id': 'turn-a', 'sequence': 2, 'kind': 'text.delta', 'payload': {'text': 'duplicate'}})
+    controller.accept({'turn_id': 'turn-old', 'sequence': 99, 'kind': 'dialogue.final', 'payload': {}})
+    controller.accept({'turn_id': 'turn-a', 'sequence': 3, 'kind': 'turn.finished', 'payload': {}})
+    controller.accept({'turn_id': 'turn-a', 'sequence': 4, 'kind': 'emotion.changed', 'payload': {}})
+    check([item['kind'] for item in accepted] == ['turn.started', 'text.delta', 'turn.finished'],
+          'dialogue controller accepted stale or post-terminal events')
+    check(len(stale) == 3, 'dialogue controller did not report every rejected event')
+    check(not controller.accept_result({'turn_id': 'turn-old'}), 'stale generation result was accepted')
+    check(controller.accept_result({'turn_id': 'turn-a'}), 'current generation result was rejected')
+    check(not controller.active_turn_id, 'accepted result did not clear the active generation')
+
+    settings = RuntimeSettingsController()
+    speech_updates: list[dict[str, Any]] = []
+    avatar_updates: list[tuple[dict[str, Any], bool]] = []
+    settings.speech_changed.connect(speech_updates.append)
+    settings.avatar_changed.connect(lambda config, force: avatar_updates.append((config, force)))
+    settings.apply({'tts_bailian_api_key': 'sk-runtime-test', 'language': 'en'}, force_all=True)
+    settings.apply({'tts_bailian_api_key': '<hidden>', 'language': 'zh'})
+    settings.apply({'live2d_model_path': '/tmp/model.model3.json'}, force_avatar=True)
+    check(settings.config['tts_bailian_api_key'] == 'sk-runtime-test',
+          'runtime settings replaced a real secret with a redaction marker')
+    check(settings.config['language'] == 'zh' and len(speech_updates) >= 2,
+          'speech settings did not apply immediately')
+    check(avatar_updates and avatar_updates[-1][1], 'forced avatar hot reload was not routed')
+    standalone = {'api_key': 'sk-keep'}
+    merge_runtime_config(standalone, {'api_key': '***'})
+    check(standalone['api_key'] == 'sk-keep', 'safe runtime merge leaked a hidden secret update')
+
+
 def test_text_helpers() -> None:
     sys.path.insert(0, str(GUI_DIR))
     import platform as _platform
@@ -257,6 +301,7 @@ def test_text_helpers() -> None:
     from stt import DashScopeParaformerSTT, WindowsSpeechSTT, create_stt, resolve_stt_provider
     from tts import SubprocessAudioPlayer, WindowsSapiTTS, clean_tts_text, compact_tts_error, create_tts, redact_secret, resolve_tts_provider
     from diagnostics import collect_report
+    from speech import QtAudioPlayer
 
     assert clean_tts_text('(smiles) I missed you. [debug] hidden') == 'I missed you.'
     assert clean_tts_text('（轻轻握住你的手）I am here.') == 'I am here.'
@@ -337,6 +382,13 @@ def test_text_helpers() -> None:
     report = collect_report()
     output = json.dumps(report, ensure_ascii=True)
     check('sk-' not in output, 'diagnostics report leaked a likely API key')
+    check(report['modules']['PySide6.QtWebEngineWidgets'], 'diagnostics did not detect Qt WebEngine')
+    check(report['paths']['live2d_web_entry']['exists'], 'diagnostics did not find the Live2D renderer')
+    audio_player = QtAudioPlayer()
+    audio_player.configure(1.5, 'Nonexistent deterministic test device')
+    check(audio_player.output_device == 'Nonexistent deterministic test device',
+          'audio output selection was not applied without initializing the backend')
+    audio_player.close()
 
 
 def test_speech_pipeline() -> None:
@@ -857,6 +909,10 @@ def test_context_translation_cache() -> None:
             store.close()
 
 def test_package_audit() -> None:
+    sys.path.insert(0, str(GUI_DIR))
+    from package_audit import audit_runtime_files
+
+    check(not audit_runtime_files(ROOT_DIR), 'repository is missing required packaged runtime files')
     with tempfile.TemporaryDirectory(prefix='maica-package-audit-') as temp_dir:
         safe_root = Path(temp_dir)
         (safe_root / 'safe.txt').write_text('hello', encoding='utf-8')
@@ -1390,6 +1446,8 @@ def main() -> int:
     print('live2d_model_import ok')
     test_avatar_mapping()
     print('avatar_mapping ok')
+    test_gui_controllers()
+    print('gui_controllers ok')
     test_text_helpers()
     print('text_helpers ok')
     test_speech_pipeline()

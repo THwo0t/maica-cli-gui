@@ -3,15 +3,18 @@
 A MAICA/MAS-inspired local desktop companion prototype.
 
 The project currently focuses on an independent PySide6 GUI. The CLI remains a
-debugger and maintenance console. Native Live2D is intentionally not included
-yet; the current avatar is rendered from MAS-style layered PNG runtime assets.
+debugger and maintenance console. The GUI supports layered PNG, VTube Studio,
+and an embedded Cubism 4 renderer; licensed Live2D models and Cubism Core are
+provided by the user and are never bundled with a Release.
 
 ## Current Features
 
 - OpenAI-compatible chat backend.
 - MAICA/MAS-style context planning, memory, profile, affection, facts, and events.
 - Independent PySide6 GUI with live streaming display for compatible APIs.
-- Layered Monika PNG avatar with expression mapping.
+- Layered PNG, VTube Studio, and embedded Cubism 4 avatar backends.
+- Real Qt audio playback state and RMS-driven Live2D lip sync.
+- Generation-safe runtime events, cancellation, and stale-result rejection.
 - Runtime context strip with date/time, affection, relationship stage, and today events.
 - Auto/day/night/rain spaceroom background modes.
 - Aliyun Bailian CosyVoice TTS provider.
@@ -149,6 +152,11 @@ dirty and the GUI asks the service to rebuild it when possible.
 
 Each stable increment is tagged and published as a GitHub Release. The latest
 release is the recommended restore point.
+
+The `v0.13.0` upgrade does not migrate or rewrite the user database. Existing
+configuration gains safe defaults automatically. See
+`maica gui/RELEASE_NOTES_v0.13.0.md` for model import, diagnostics, known
+limitations, and avatar fallback behavior.
 
 ## Safety Notes
 

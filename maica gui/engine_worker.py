@@ -53,7 +53,7 @@ _UPDATABLE_FIELDS: dict[str, Any] = {
     'tts_bailian_voice': str, 'tts_bailian_format': str, 'tts_playback_backend': str,
     'tts_bailian_instruction': str, 'stt_provider': str, 'stt_language': str, 'stt_timeout': int,
     'speech_streaming_enabled': bool, 'speech_max_concurrency': int,
-    'speech_queue_behavior': str, 'lip_sync_sensitivity': float,
+    'speech_queue_behavior': str, 'lip_sync_sensitivity': float, 'audio_output_device': str,
     'embedding_enabled': bool, 'memory_embedding_enabled': bool,
     'embedding_service_enabled': bool, 'embedding_service_autostart': bool,
     'embedding_service_host': str, 'embedding_service_port': int, 'embedding_service_timeout': int,
@@ -419,6 +419,7 @@ class GuiEngineWorker(QObject):
             if stream_started:
                 result['streamed'] = True
             if self._is_current_turn(turn_id):
+                result['turn_id'] = turn_id
                 self.finished.emit(result)
         except Exception as exc:
             if self._is_current_turn(turn_id):
@@ -431,6 +432,7 @@ class GuiEngineWorker(QObject):
                         'action': {},
                         'mtrigger_notices': [],
                         'debug': {},
+                        'turn_id': turn_id,
                         'error': self._safe_error_text(exc, with_traceback=True),
                     }
                 )

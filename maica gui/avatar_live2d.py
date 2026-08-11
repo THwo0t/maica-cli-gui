@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable
 
-from PySide6.QtCore import QObject, Qt, QUrl, Signal, Slot
+from PySide6.QtCore import QObject, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QColor
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
@@ -107,6 +107,7 @@ class EmbeddedLive2DDriver:
         self.view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.page = RestrictedLive2DPage(self.view)
         self.page.setBackgroundColor(QColor(0, 0, 0, 0))
+        self.page.renderProcessTerminated.connect(self._render_process_terminated)
         self.view.setPage(self.page)
         self.stack.addWidget(self.view)
         self.channel: QWebChannel | None = None
@@ -117,6 +118,9 @@ class EmbeddedLive2DDriver:
         self._mouth_open = 0.0
         self._validation_error = ''
         self._entry_point = ''
+        self._running = False
+        self._disposed = False
+        self._renderer_restarts = 0
 
     def can_start(self) -> bool:
         ready, error, entry_point = self.validate_config(self.config)
@@ -131,6 +135,19 @@ class EmbeddedLive2DDriver:
             self._set_status(f'unavailable: {self._validation_error}')
             self.stack.setCurrentWidget(self.png_widget)
             return
+        self._running = True
+        self._disposed = False
+        self._renderer_restarts = 0
+        self._load_renderer()
+
+    def _load_renderer(self) -> None:
+        if not self._running or self._disposed:
+            return
+        if self.channel is not None and self.bridge is not None:
+            self.channel.deregisterObject(self.bridge)
+            self.bridge.deleteLater()
+        self.channel = None
+        self.bridge = None
         self._set_status('loading')
         self.stack.setCurrentWidget(self.png_widget)
         settings = self.page.settings()
@@ -163,6 +180,7 @@ class EmbeddedLive2DDriver:
         self.view.load(QUrl.fromLocalFile(str(WEB_ENTRY)))
 
     def stop(self) -> None:
+        self._running = False
         self._set_status('stopped')
         self.stack.setCurrentWidget(self.png_widget)
         self.view.stop()
@@ -173,6 +191,7 @@ class EmbeddedLive2DDriver:
         self.channel = None
 
     def dispose(self) -> None:
+        self._disposed = True
         self.stop()
         self.stack.removeWidget(self.view)
         self.view.deleteLater()
@@ -228,6 +247,26 @@ class EmbeddedLive2DDriver:
             text = text[:117] + '...'
         self.stack.setCurrentWidget(self.png_widget)
         self._set_status(f'error: {text}')
+
+    def _render_process_terminated(self, status: Any, exit_code: int) -> None:
+        if not self._running or self._disposed:
+            return
+        self.stack.setCurrentWidget(self.png_widget)
+        detail = getattr(status, 'name', str(status))
+        backend = str(self.config.get('avatar_backend') or 'embedded_live2d').strip().lower()
+        if backend == 'embedded_live2d' and self._renderer_restarts < 1:
+            self._renderer_restarts += 1
+            self._set_status(f'recovering renderer ({detail}, code {int(exit_code)})')
+            QTimer.singleShot(750, self._reload_after_crash)
+            return
+        self._set_status(f'error: renderer process terminated ({detail}, code {int(exit_code)})')
+
+    def _reload_after_crash(self) -> None:
+        if not self._running or self._disposed:
+            return
+        self.view.stop()
+        self.view.setUrl(QUrl('about:blank'))
+        self._load_renderer()
 
     def _hit_area(self, area: str) -> None:
         if self.on_hit and area:

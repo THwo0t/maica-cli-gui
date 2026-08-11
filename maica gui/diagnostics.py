@@ -23,6 +23,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 CLI_DIR = ROOT_DIR / 'maica cli'
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
+LIVE2D_WEB_DIR = GUI_DIR / 'live2d_web' / 'dist'
 CONFIG_PATH = CLI_DIR / 'config.json'
 DB_PATH = CLI_DIR / 'maica_cli.db'
 
@@ -51,10 +52,17 @@ SAFE_CONFIG_KEYS = (
     'vts_plugin_name',
     'vts_plugin_developer',
     'vts_parameter_prefix',
+    'live2d_render_fps',
+    'live2d_eye_tracking',
+    'live2d_transparent_background',
     'tts_enabled',
     'tts_provider',
     'tts_bailian_model',
     'tts_bailian_format',
+    'speech_streaming_enabled',
+    'speech_queue_behavior',
+    'speech_max_concurrency',
+    'lip_sync_sensitivity',
     'stt_provider',
     'stt_language',
     'stt_timeout',
@@ -135,6 +143,28 @@ def safe_config_snapshot() -> dict[str, Any]:
     return snapshot
 
 
+def private_resource_snapshot() -> dict[str, Any]:
+    """Diagnose user-supplied resources without exposing their local paths."""
+    try:
+        with CONFIG_PATH.open('r', encoding='utf-8-sig') as handle:
+            config = json.load(handle)
+    except Exception:
+        config = {}
+    model_text = str(config.get('live2d_model_path') or '').strip()
+    core_text = str(config.get('live2d_core_path') or '').strip()
+    model_path = Path(model_text).expanduser() if model_text else None
+    core_path = Path(core_text).expanduser() if core_text else None
+    return {
+        'live2d_model_configured': bool(model_text),
+        'live2d_model_exists': bool(model_path and model_path.exists()),
+        'live2d_model_is_model3': bool(model_path and model_path.name.lower().endswith('.model3.json')),
+        'cubism_core_configured': bool(core_text),
+        'cubism_core_exists': bool(core_path and core_path.is_file()),
+        'cubism_core_is_javascript': bool(core_path and core_path.suffix.lower() == '.js'),
+        'audio_output_selected': bool(str(config.get('audio_output_device') or '').strip()),
+    }
+
+
 def git_snapshot() -> dict[str, Any]:
     branch = command_output(['git', 'rev-parse', '--abbrev-ref', 'HEAD'])
     commit = command_output(['git', 'rev-parse', '--short', 'HEAD'])
@@ -158,7 +188,7 @@ def gh_auth_snapshot() -> dict[str, Any]:
 def collect_report() -> dict[str, Any]:
     return {
         'app': 'MAICA CLI GUI',
-        'diagnostics_version': '0.11.11',
+        'diagnostics_version': '0.13.0',
         'python': {
             'executable': sys.executable,
             'version': sys.version,
@@ -177,9 +207,17 @@ def collect_report() -> dict[str, Any]:
             'asset_runtime_dir': path_status(ASSET_DIR),
             'asset_manifest': path_status(ASSET_DIR / 'manifest.json'),
             'example_config': path_status(CLI_DIR / 'config.example.json'),
+            'live2d_web_entry': path_status(LIVE2D_WEB_DIR / 'index.html'),
+            'live2d_web_assets': path_status(LIVE2D_WEB_DIR / 'assets'),
+            'live2d_expression_map': path_status(GUI_DIR / 'live2d_expression_map.json'),
+            'third_party_notices': path_status(GUI_DIR / 'live2d_web' / 'THIRD_PARTY_NOTICES.md'),
         },
         'modules': {
             'PySide6': module_available('PySide6'),
+            'PySide6.QtMultimedia': module_available('PySide6.QtMultimedia'),
+            'PySide6.QtWebChannel': module_available('PySide6.QtWebChannel'),
+            'PySide6.QtWebEngineCore': module_available('PySide6.QtWebEngineCore'),
+            'PySide6.QtWebEngineWidgets': module_available('PySide6.QtWebEngineWidgets'),
             'requests': module_available('requests'),
             'websocket': module_available('websocket'),
             'numpy': module_available('numpy'),
@@ -211,6 +249,7 @@ def collect_report() -> dict[str, Any]:
             'gh_auth': gh_auth_snapshot(),
         },
         'config': safe_config_snapshot(),
+        'runtime_resources': private_resource_snapshot(),
     }
 
 

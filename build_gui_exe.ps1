@@ -87,7 +87,7 @@ if (Test-Path -LiteralPath $ServiceExe) {
     Copy-Item -LiteralPath $ServiceExe -Destination (Join-Path $GuiDist "maica-embedding-service.exe") -Force
 }
 
-& $PythonExe @PythonArgs "maica gui\package_audit.py" $GuiDist
+& $PythonExe @PythonArgs "maica gui\package_audit.py" $GuiDist --require-runtime
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }
