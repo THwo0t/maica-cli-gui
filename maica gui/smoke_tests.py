@@ -35,6 +35,8 @@ def compile_python() -> None:
         GUI_DIR / 'assets.py',
         GUI_DIR / 'avatar_controller.py',
         GUI_DIR / 'avatar_driver.py',
+        GUI_DIR / 'avatar_mapping.py',
+        GUI_DIR / 'avatar_mapping_dialog.py',
         GUI_DIR / 'avatar_png.py',
         GUI_DIR / 'avatar_vts.py',
         GUI_DIR / 'avatar_live2d.py',
@@ -77,7 +79,7 @@ def validate_json() -> None:
 
 
 def test_utf8_sources() -> None:
-    suffixes = {'.py', '.md', '.json', '.jsonl', '.ps1', '.txt'}
+    suffixes = {'.py', '.md', '.json', '.jsonl', '.ps1', '.txt', '.js', '.html'}
     excluded_dirs = {
         '.git',
         '__pycache__',
@@ -86,6 +88,7 @@ def test_utf8_sources() -> None:
         'backups',
         'dist',
         'build',
+        'node_modules',
     }
     mojibake_markers = (
         chr(0xFFFD),
@@ -214,6 +217,37 @@ def test_live2d_model_import() -> None:
         web_entry = GUI_DIR / 'live2d_web' / 'dist' / 'index.html'
         bundles = list((web_entry.parent / 'assets').glob('*.js')) if web_entry.is_file() else []
         check(web_entry.is_file() and bundles, 'prebuilt Live2D web renderer is missing')
+
+
+def test_avatar_mapping() -> None:
+    sys.path.insert(0, str(GUI_DIR))
+    from avatar_mapping import STANDARD_EMOTIONS, load_avatar_mapping, save_avatar_mapping
+
+    mapping, sources = load_avatar_mapping()
+    check(STANDARD_EMOTIONS.issubset(mapping['emotions']), 'default avatar emotion mapping is incomplete')
+    check(sources, 'avatar mapping sources should identify the default JSON')
+    with tempfile.TemporaryDirectory(prefix='maica-avatar-map-') as temp_dir:
+        override = Path(temp_dir) / 'override.json'
+        override.write_text(
+            json.dumps({
+                'version': 1,
+                'emotions': {
+                    'shy': {'expressions': ['脸红'], 'parameters': {'ParamCheek': 0.8}},
+                    'arbitrary_model_output': {'expressions': ['unsafe']},
+                },
+                'actions': {
+                    'wave': {'motions': ['Hello'], 'fallback_emotion': 'happy'},
+                    'delete_files': {'motions': ['Danger']},
+                },
+            }, ensure_ascii=False),
+            encoding='utf-8',
+        )
+        merged, _sources = load_avatar_mapping(override)
+        check(merged['emotions']['shy']['expressions'] == ['脸红'], 'UTF-8 model expression override failed')
+        check('arbitrary_model_output' not in merged['emotions'], 'unknown model emotion entered the whitelist')
+        check('delete_files' not in merged['actions'], 'unknown model action entered the whitelist')
+        saved = save_avatar_mapping(Path(temp_dir) / 'saved.json', merged)
+        check('脸红' in saved.read_text(encoding='utf-8'), 'avatar mapping was not saved as UTF-8')
 
 
 def test_text_helpers() -> None:
@@ -1354,6 +1388,8 @@ def main() -> int:
     print('avatar_helpers ok')
     test_live2d_model_import()
     print('live2d_model_import ok')
+    test_avatar_mapping()
+    print('avatar_mapping ok')
     test_text_helpers()
     print('text_helpers ok')
     test_speech_pipeline()

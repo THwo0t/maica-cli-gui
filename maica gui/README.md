@@ -1,4 +1,4 @@
-# MAICA GUI v0.12.5
+# MAICA GUI v0.12.6
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -122,6 +122,22 @@ Cubism Core are never included in Git commits, Releases, or user-data exports.
 
 `auto` tries a valid embedded model first, then VTube Studio, and always retains
 the PNG avatar as the final fallback.
+
+### Expressions, motions, and lip sync
+
+The renderer maps MAICA's standard emotions to model-specific expression names
+through UTF-8 JSON. Open Settings -> Avatar -> Expression map -> Advanced to
+inspect, validate, or save a per-model override. A model can also provide
+`maica_avatar_map.json` beside its `.model3.json` file. Model output never
+becomes a raw Cubism parameter or motion name; only standard emotions and the
+`wave`, `nod`, `surprise`, and `pout` action whitelist are accepted.
+
+During playback, real RMS audio amplitude drives `ParamMouthOpenY` on every
+model update. Attack defaults to 60 ms and release to 120 ms, avoiding both
+jitter and the old text-duration estimate. Cubism's own idle motion, breathing,
+physics, and blink behavior remain active. Mouse eye tracking is optional, and
+model hit areas produce local avatar reactions without receiving file-tool or
+agent permissions.
 
 ## TTS
 

@@ -66,6 +66,7 @@ _UPDATABLE_FIELDS: dict[str, Any] = {
     'live2d_model_path': str, 'live2d_core_path': str, 'live2d_render_fps': int,
     'live2d_eye_tracking': bool, 'live2d_transparent_background': bool,
     'live2d_expression_map_path': str,
+    'live2d_mouth_attack_ms': int, 'live2d_mouth_release_ms': int,
 }
 # Non-secret config keys the GUI shows but cannot edit (read-only display).
 _EXTRA_SAFE_KEYS = {'example_bank_paths_by_language', 'example_bank_core_paths_by_language'}

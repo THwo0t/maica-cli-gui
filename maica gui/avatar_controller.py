@@ -19,6 +19,7 @@ except Exception:  # pragma: no cover - optional WebEngine installation path
 
 StatusCallback = Callable[[str], None]
 TokenCallback = Callable[[str], None]
+HitCallback = Callable[[str], None]
 
 
 class AvatarController:
@@ -30,12 +31,14 @@ class AvatarController:
         config: dict[str, Any] | None = None,
         on_status: StatusCallback | None = None,
         on_token: TokenCallback | None = None,
+        on_hit: HitCallback | None = None,
     ) -> None:
         self.assets = assets
         self.label = label
         self.stack = stack
         self.on_status = on_status
         self.on_token = on_token
+        self.on_hit = on_hit
         self.png = PngAvatarDriver(assets, label)
         self.vts: VTubeStudioDriver | None = None
         self.embedded: Any = None
@@ -105,6 +108,7 @@ class AvatarController:
             self.stack,
             self.label,
             on_status=self._set_live2d_status,
+            on_hit=self.on_hit,
         )
         self.embedded = driver
         driver.start()

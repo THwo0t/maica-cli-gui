@@ -14,6 +14,7 @@ from PySide6.QtWebEngineCore import QWebEnginePage, QWebEngineSettings
 from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWidgets import QLabel, QStackedWidget
 
+from avatar_mapping import AvatarMappingError, load_avatar_mapping
 from live2d_model import validate_cubism_core, validate_live2d_model
 
 
@@ -81,6 +82,10 @@ class EmbeddedLive2DDriver:
         core_ok, core_error = validate_cubism_core(config.get('live2d_core_path'))
         if not core_ok:
             return False, core_error, ''
+        try:
+            load_avatar_mapping(config.get('live2d_expression_map_path'), report.entry_point)
+        except AvatarMappingError as exc:
+            return False, str(exc), ''
         return True, '', report.entry_point
 
     def __init__(
@@ -133,6 +138,10 @@ class EmbeddedLive2DDriver:
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessFileUrls, True)
         settings.setAttribute(QWebEngineSettings.WebAttribute.LocalContentCanAccessRemoteUrls, False)
         settings.setAttribute(QWebEngineSettings.WebAttribute.JavascriptCanOpenWindows, False)
+        mapping, mapping_sources = load_avatar_mapping(
+            self.config.get('live2d_expression_map_path'),
+            self._entry_point,
+        )
         initial_state = {
             'modelUrl': QUrl.fromLocalFile(self._entry_point).toString(),
             'coreUrl': QUrl.fromLocalFile(str(Path(self.config['live2d_core_path']).expanduser().resolve())).toString(),
@@ -142,6 +151,10 @@ class EmbeddedLive2DDriver:
             'emotion': self._emotion,
             'speaking': self._speaking,
             'mouthOpen': self._mouth_open,
+            'mouthAttackMs': max(10, min(1000, int(self.config.get('live2d_mouth_attack_ms', 60) or 60))),
+            'mouthReleaseMs': max(10, min(1000, int(self.config.get('live2d_mouth_release_ms', 120) or 120))),
+            'avatarMapping': mapping,
+            'mappingSources': [Path(path).name for path in mapping_sources],
         }
         self.channel = QWebChannel(self.page)
         self.bridge = Live2DBridge(initial_state, self)
@@ -197,6 +210,9 @@ class EmbeddedLive2DDriver:
     def _send(self, kind: str, payload: dict[str, Any]) -> None:
         if self.bridge is None:
             return
+        state_key = {'emotion': 'emotion', 'speaking': 'speaking', 'mouth': 'mouthOpen'}.get(kind)
+        if state_key:
+            self.bridge.state[state_key] = payload.get('value')
         command = {'kind': kind, 'payload': dict(payload)}
         self.bridge.command.emit(json.dumps(command, ensure_ascii=False))
 

@@ -9,6 +9,12 @@ let model = null
 let state = null
 let modelNaturalWidth = 1
 let modelNaturalHeight = 1
+let currentEmotion = 'neutral'
+let emotionParameters = {}
+let speaking = false
+let mouthTarget = 0
+let mouthCurrent = 0
+let lastParameterUpdate = performance.now()
 
 function status(value) {
   if (bridge)
@@ -54,6 +60,79 @@ function setParameter(id, value) {
   }
 }
 
+function availableExpressionNames() {
+  const definitions = model?.internalModel?.motionManager?.expressionManager?.definitions
+  if (!Array.isArray(definitions))
+    return []
+  return definitions.map((item, index) => ({
+    index,
+    name: String(item?.Name || item?.name || item?.File || ''),
+  }))
+}
+
+async function applyEmotion(value) {
+  currentEmotion = String(value || 'neutral').toLowerCase()
+  const mapping = state?.avatarMapping?.emotions || {}
+  const rule = mapping[currentEmotion] || mapping.neutral || { expressions: [], parameters: {} }
+  emotionParameters = rule.parameters || {}
+  const available = availableExpressionNames()
+  for (const candidate of rule.expressions || []) {
+    const wanted = String(candidate).toLowerCase()
+    const found = available.find((entry) => {
+      const actual = entry.name.toLowerCase()
+      return actual === wanted || actual.split(/[\\/]/).pop()?.replace(/\.exp3\.json$/i, '') === wanted
+    })
+    if (!found)
+      continue
+    try {
+      await model?.expression(found.index)
+    }
+    catch {
+      // Missing or malformed expressions fall back to model-neutral rendering.
+    }
+    return
+  }
+}
+
+async function applyAction(value) {
+  const action = String(value || '').toLowerCase()
+  const rule = state?.avatarMapping?.actions?.[action]
+  if (!rule)
+    return
+  const definitions = model?.internalModel?.motionManager?.definitions || {}
+  const groups = Object.keys(definitions)
+  for (const candidate of rule.motions || []) {
+    const group = groups.find((name) => name.toLowerCase() === String(candidate).toLowerCase())
+    if (!group)
+      continue
+    try {
+      await model?.motion(group, 0, 3)
+      return
+    }
+    catch {
+      // Try the next configured motion group.
+    }
+  }
+  await applyEmotion(rule.fallback_emotion || currentEmotion)
+}
+
+function updatePerformanceParameters() {
+  const now = performance.now()
+  const elapsed = Math.max(1, Math.min(100, now - lastParameterUpdate))
+  lastParameterUpdate = now
+  const target = speaking ? mouthTarget : 0
+  const tau = target > mouthCurrent
+    ? Math.max(10, Number(state?.mouthAttackMs) || 60)
+    : Math.max(10, Number(state?.mouthReleaseMs) || 120)
+  const alpha = 1 - Math.exp(-elapsed / tau)
+  mouthCurrent += (target - mouthCurrent) * alpha
+  if (Math.abs(mouthCurrent - target) < 0.002)
+    mouthCurrent = target
+  setParameter('ParamMouthOpenY', mouthCurrent)
+  for (const [parameter, value] of Object.entries(emotionParameters))
+    setParameter(parameter, value)
+}
+
 function handleCommand(raw) {
   let command
   try {
@@ -65,9 +144,16 @@ function handleCommand(raw) {
   const kind = String(command?.kind || '')
   const payload = command?.payload || {}
   if (kind === 'mouth')
-    setParameter('ParamMouthOpenY', Math.max(0, Math.min(1, Number(payload.value) || 0)))
-  else if (kind === 'speaking' && !payload.value)
-    setParameter('ParamMouthOpenY', 0)
+    mouthTarget = Math.max(0, Math.min(1, Number(payload.value) || 0))
+  else if (kind === 'speaking') {
+    speaking = Boolean(payload.value)
+    if (!speaking)
+      mouthTarget = 0
+  }
+  else if (kind === 'emotion')
+    applyEmotion(payload.value).catch(fail)
+  else if (kind === 'action')
+    applyAction(payload.value).catch(fail)
   else if (kind === 'refresh')
     fitModel()
 }
@@ -96,6 +182,7 @@ async function start(initialState) {
   modelNaturalWidth = Math.max(1, model.width)
   modelNaturalHeight = Math.max(1, model.height)
   app.stage.addChild(model)
+  model.internalModel?.on('beforeModelUpdate', updatePerformanceParameters)
   model.on('hit', (areas) => {
     if (bridge && Array.isArray(areas) && areas.length)
       bridge.hitArea(String(areas[0]))
@@ -109,7 +196,10 @@ async function start(initialState) {
     })
   }
   fitModel()
-  setParameter('ParamMouthOpenY', state.mouthOpen || 0)
+  speaking = Boolean(state.speaking)
+  mouthTarget = Math.max(0, Math.min(1, Number(state.mouthOpen) || 0))
+  currentEmotion = String(state.emotion || 'neutral')
+  await applyEmotion(currentEmotion)
   status('model.loaded')
 }
 

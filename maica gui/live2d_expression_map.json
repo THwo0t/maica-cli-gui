@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "emotions": {
+    "neutral": {"expressions": ["neutral", "default"], "parameters": {}},
+    "smile": {"expressions": ["smile", "happy"], "parameters": {}},
+    "happy": {"expressions": ["happy", "smile", "joy"], "parameters": {}},
+    "gentle": {"expressions": ["gentle", "soft", "smile"], "parameters": {}},
+    "shy": {"expressions": ["shy", "blush", "smile"], "parameters": {}},
+    "playful": {"expressions": ["playful", "smug", "happy"], "parameters": {}},
+    "thinking": {"expressions": ["thinking", "serious", "neutral"], "parameters": {}},
+    "concerned": {"expressions": ["concerned", "worried", "sad"], "parameters": {}},
+    "sad": {"expressions": ["sad", "concerned"], "parameters": {}},
+    "surprised": {"expressions": ["surprised", "shock"], "parameters": {}}
+  },
+  "actions": {
+    "wave": {"motions": ["Wave", "TapBody"], "fallback_emotion": "happy"},
+    "nod": {"motions": ["Nod", "TapBody"], "fallback_emotion": "smile"},
+    "surprise": {"motions": ["Surprise", "TapBody"], "fallback_emotion": "surprised"},
+    "pout": {"motions": ["Pout", "TapBody"], "fallback_emotion": "concerned"}
+  }
+}

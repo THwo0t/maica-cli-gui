@@ -177,6 +177,8 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "live2d_eye_tracking": True,
     "live2d_transparent_background": True,
     "live2d_expression_map_path": "",
+    "live2d_mouth_attack_ms": 60,
+    "live2d_mouth_release_ms": 120,
     "tts_enabled": False,
     "speech_streaming_enabled": True,
     "speech_max_concurrency": 2,

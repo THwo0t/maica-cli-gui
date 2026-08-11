@@ -47,6 +47,12 @@ datas = collect_data_files(CLI_DIR, 'maica cli', CLI_EXCLUDES)
 datas += collect_data_files(ASSET_RUNTIME_DIR, 'maica gui assets/runtime')
 if LIVE2D_WEB_DIR.exists():
     datas += collect_data_files(LIVE2D_WEB_DIR, 'maica gui/live2d_web/dist')
+for source, target in (
+    (GUI_DIR / 'live2d_expression_map.json', 'maica gui'),
+    (GUI_DIR / 'live2d_web' / 'THIRD_PARTY_NOTICES.md', 'maica gui/live2d_web'),
+):
+    if source.exists():
+        datas.append((str(source), target))
 
 block_cipher = None
 

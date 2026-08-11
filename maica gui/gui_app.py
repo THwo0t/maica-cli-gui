@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.12.5.
+"""MAICA GUI v0.12.6.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -51,7 +51,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.12.5'
+APP_VERSION = '0.12.6'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -62,6 +62,7 @@ if _PET_DIR.exists() and str(_PET_DIR) not in sys.path:
 
 from assets import AssetManager, normalize_emotion  # noqa: E402
 from avatar_controller import AvatarController  # noqa: E402
+from avatar_mapping_dialog import AvatarMappingDialog  # noqa: E402
 from diagnostics import collect_report  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
 from live2d_model import Live2DModelError, import_live2d_zip, validate_live2d_model  # noqa: E402
@@ -452,6 +453,7 @@ class SettingsDialog(QDialog):
         self.live2d_render_fps.setRange(15, 120)
         self.live2d_eye_tracking = QCheckBox('Enable mouse eye tracking')
         self.live2d_transparent_background = QCheckBox('Use a transparent Live2D canvas')
+        self.live2d_expression_map_path = QLineEdit()
         self.avatar_status = QLabel('avatar: png')
         self.avatar_status.setObjectName('contextLabel')
         self.avatar_status.setWordWrap(True)
@@ -597,6 +599,14 @@ class SettingsDialog(QDialog):
         avatar_form.addRow('Render FPS', self.live2d_render_fps)
         avatar_form.addRow('', self.live2d_eye_tracking)
         avatar_form.addRow('', self.live2d_transparent_background)
+        map_box = QWidget()
+        map_row = QHBoxLayout(map_box)
+        map_row.setContentsMargins(0, 0, 0, 0)
+        map_row.addWidget(self.live2d_expression_map_path, 1)
+        map_advanced = QPushButton('Advanced')
+        map_advanced.clicked.connect(self._open_live2d_mapping)
+        map_row.addWidget(map_advanced)
+        avatar_form.addRow('Expression map', map_box)
         avatar_form.addRow('VTube Studio URL', self.vts_url)
         avatar_form.addRow('VTS plugin name', self.vts_plugin_name)
         avatar_form.addRow('VTS developer', self.vts_plugin_developer)
@@ -701,6 +711,7 @@ class SettingsDialog(QDialog):
         self.live2d_render_fps.setValue(int(config.get('live2d_render_fps') or 60))
         self.live2d_eye_tracking.setChecked(bool(config.get('live2d_eye_tracking', True)))
         self.live2d_transparent_background.setChecked(bool(config.get('live2d_transparent_background', True)))
+        self.live2d_expression_map_path.setText(str(config.get('live2d_expression_map_path') or ''))
         avatar_status = getattr(self.owner, 'avatar_status_text', lambda: 'png')
         self.avatar_status.setText(f'avatar: {avatar_status()}')
         self.gui_idle_spire_enabled.setChecked(bool(config.get('gui_idle_spire_enabled', False)))
@@ -737,6 +748,7 @@ class SettingsDialog(QDialog):
             'live2d_render_fps': self.live2d_render_fps.value(),
             'live2d_eye_tracking': self.live2d_eye_tracking.isChecked(),
             'live2d_transparent_background': self.live2d_transparent_background.isChecked(),
+            'live2d_expression_map_path': self.live2d_expression_map_path.text().strip(),
         }
         self.owner.reconnect_avatar_backend(updates, force=True)
         self.avatar_status.setText(f'avatar: {self.owner.avatar_status_text()}')
@@ -777,6 +789,15 @@ class SettingsDialog(QDialog):
         )
         if selected:
             self.live2d_core_path.setText(selected)
+
+    def _open_live2d_mapping(self) -> None:
+        dialog = AvatarMappingDialog(
+            self.live2d_expression_map_path.text().strip(),
+            self.live2d_model_path.text().strip(),
+            self,
+        )
+        dialog.saved.connect(self.live2d_expression_map_path.setText)
+        dialog.exec()
 
     def _render_privacy_status(self, config: dict[str, Any]) -> None:
         def onoff(value: Any) -> str:
@@ -903,6 +924,7 @@ class SettingsDialog(QDialog):
             'live2d_render_fps': self.live2d_render_fps.value(),
             'live2d_eye_tracking': self.live2d_eye_tracking.isChecked(),
             'live2d_transparent_background': self.live2d_transparent_background.isChecked(),
+            'live2d_expression_map_path': self.live2d_expression_map_path.text().strip(),
             'gui_idle_spire_enabled': self.gui_idle_spire_enabled.isChecked(),
             'gui_idle_spire_minutes': self.gui_idle_spire_minutes.value(),
             'idle_self_actions_enabled': self.idle_self_actions_enabled.isChecked(),
@@ -1317,6 +1339,7 @@ class MainWindow(QMainWindow):
             config=self.current_config,
             on_status=self._handle_avatar_status,
             on_token=self._handle_vts_token,
+            on_hit=self._handle_avatar_hit,
         )
         self.avatar_timer.start()
         self._connect_worker()
@@ -1666,6 +1689,17 @@ class MainWindow(QMainWindow):
             return
         self.current_config['vts_auth_token'] = token
         self.config_save_requested.emit({'vts_auth_token': token})
+
+    def _handle_avatar_hit(self, area: str) -> None:
+        normalized = str(area or '').strip().lower()
+        if 'head' in normalized or 'face' in normalized:
+            self.set_emotion('playful')
+            if self.avatar_controller is not None:
+                self.avatar_controller.play_action({'gesture': 'nod'})
+        elif 'body' in normalized:
+            self.set_emotion('smile')
+            if self.avatar_controller is not None:
+                self.avatar_controller.play_action({'gesture': 'wave'})
 
     def reconnect_avatar_backend(self, overrides: dict[str, Any] | None = None, force: bool = False) -> None:
         if overrides:
