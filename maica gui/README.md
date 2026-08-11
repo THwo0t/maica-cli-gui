@@ -1,4 +1,4 @@
-# MAICA GUI v0.12.4
+# MAICA GUI v0.12.5
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -59,7 +59,7 @@ assets.
 - Default dialogue output is English when `language` is set to `en`.
 - Background scene from MAS spaceroom assets.
 - Layered PNG avatar preview.
-- Avatar backend layer for PNG now, VTube Studio MVP, and future Live2D WebView.
+- Avatar backends for PNG, VTube Studio, and an embedded Cubism 4 WebView.
 - Emotion metadata changes the visible expression preset.
 - MTrigger notices are shown in the chat log.
 - Windows SAPI TTS and Aliyun Bailian CosyVoice TTS.
@@ -97,6 +97,31 @@ The VTS MVP sends emotion, mouth-open, breathing, and simple angle parameters.
 Use the `Maica` custom parameter prefix, or change `vts_parameter_prefix` if
 your Live2D model uses a different binding. If VTS is closed or authorization
 fails, MAICA keeps using the PNG avatar and chat remains available.
+
+## Embedded Live2D
+
+The embedded backend uses the same Chromium/WebGL class of renderer as an
+Electron application while keeping the existing PySide6 desktop architecture.
+Set `Avatar backend` to `embedded_live2d` or `auto` in Settings -> Avatar.
+
+You must provide both:
+
+- A licensed Cubism 4 model with a `.model3.json` entry point.
+- The Cubism 4 `live2dcubismcore.min.js` file obtained under Live2D's terms.
+
+Use `Browse` for an existing model folder, or `Import ZIP` to copy a model into
+the platform user-data directory. ZIP imports reject path traversal, symbolic
+links, more than 4096 entries, and more than 512 MB of expanded data. Every
+`.moc3`, texture, motion, expression, physics, pose, display-info, and user-data
+reference is checked before the model can be activated.
+
+The packaged renderer contains only PixiJS and the MIT-licensed
+`pixi-live2d-display` adapter. It has no access to MAICA's database, API keys,
+memory, or file tools. Top-level external navigation is blocked. Models and
+Cubism Core are never included in Git commits, Releases, or user-data exports.
+
+`auto` tries a valid embedded model first, then VTube Studio, and always retains
+the PNG avatar as the final fallback.
 
 ## TTS
 

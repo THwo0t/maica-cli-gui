@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -36,10 +37,12 @@ def compile_python() -> None:
         GUI_DIR / 'avatar_driver.py',
         GUI_DIR / 'avatar_png.py',
         GUI_DIR / 'avatar_vts.py',
+        GUI_DIR / 'avatar_live2d.py',
         GUI_DIR / 'engine_worker.py',
         GUI_DIR / 'gui_app.py',
         GUI_DIR / 'diagnostics.py',
         GUI_DIR / 'package_audit.py',
+        GUI_DIR / 'live2d_model.py',
         GUI_DIR / 'stt.py',
         GUI_DIR / 'speech.py',
         GUI_DIR / 'tts.py',
@@ -153,6 +156,64 @@ def test_avatar_helpers() -> None:
     driver.set_speaking(True)
     driver.set_mouth_open(0.5)
     driver.stop()
+
+
+def test_live2d_model_import() -> None:
+    sys.path.insert(0, str(GUI_DIR))
+    from live2d_model import Live2DModelError, import_live2d_zip, validate_live2d_model
+
+    with tempfile.TemporaryDirectory(prefix='maica-live2d-smoke-') as temp_dir:
+        root = Path(temp_dir)
+        model = root / 'source'
+        model.mkdir()
+        (model / 'avatar.moc3').write_bytes(b'MOC3\x03test')
+        (model / 'texture.png').write_bytes(b'not-a-real-png')
+        (model / 'avatar.model3.json').write_text(
+            json.dumps({
+                'Version': 3,
+                'FileReferences': {
+                    'Moc': 'avatar.moc3',
+                    'Textures': ['texture.png'],
+                },
+            }),
+            encoding='utf-8',
+        )
+        report = validate_live2d_model(model)
+        check(report.ok and report.model_name == 'avatar', 'valid Cubism 4 model was rejected')
+
+        archive = root / 'model.zip'
+        with zipfile.ZipFile(archive, 'w') as package:
+            for path in model.iterdir():
+                package.write(path, f'avatar/{path.name}')
+        imported = import_live2d_zip(archive, root / 'library')
+        check(imported.ok and Path(imported.entry_point).is_file(), 'safe Live2D ZIP import failed')
+
+        traversal = root / 'traversal.zip'
+        with zipfile.ZipFile(traversal, 'w') as package:
+            package.writestr('../escape.model3.json', '{}')
+        try:
+            import_live2d_zip(traversal, root / 'library')
+        except Live2DModelError:
+            pass
+        else:
+            raise AssertionError('Live2D ZIP path traversal was not rejected')
+
+        symlink = root / 'symlink.zip'
+        with zipfile.ZipFile(symlink, 'w') as package:
+            entry = zipfile.ZipInfo('avatar/link.moc3')
+            entry.create_system = 3
+            entry.external_attr = (0o120777 << 16)
+            package.writestr(entry, 'target')
+        try:
+            import_live2d_zip(symlink, root / 'library')
+        except Live2DModelError:
+            pass
+        else:
+            raise AssertionError('Live2D ZIP symbolic link was not rejected')
+
+        web_entry = GUI_DIR / 'live2d_web' / 'dist' / 'index.html'
+        bundles = list((web_entry.parent / 'assets').glob('*.js')) if web_entry.is_file() else []
+        check(web_entry.is_file() and bundles, 'prebuilt Live2D web renderer is missing')
 
 
 def test_text_helpers() -> None:
@@ -1168,11 +1229,14 @@ def test_safe_config_exposes_settings() -> None:
         'agent_tools_enabled': True, 'file_tools_enabled': True, 'sandbox_root': '/x',
         'sandbox_readonly_allowlist': ['/a'], 'llm_call_mode': 'split',
         'agent_api_base': 'b', 'agent_model': 'm', 'agent_api_key': 'sk-secret',
+        'avatar_backend': 'embedded_live2d', 'live2d_model_path': '/models/a.model3.json',
+        'live2d_core_path': '/sdk/live2dcubismcore.min.js', 'live2d_render_fps': 60,
     })
     # Settings that round-trip to the GUI must be in the safe snapshot, or the
     # dialog re-renders them to defaults after Save (the checkbox-reverts bug).
     for key in ('agent_tools_enabled', 'file_tools_enabled', 'sandbox_root',
-                'sandbox_readonly_allowlist', 'llm_call_mode', 'agent_api_base', 'agent_model'):
+                'sandbox_readonly_allowlist', 'llm_call_mode', 'agent_api_base', 'agent_model',
+                'avatar_backend', 'live2d_model_path', 'live2d_core_path', 'live2d_render_fps'):
         check(key in safe, f'safe config must expose settings key: {key}')
     check(safe.get('agent_api_key') == '<hidden>', 'agent API key must stay hidden in snapshots')
 
@@ -1288,6 +1352,8 @@ def main() -> int:
     print('embedding_service_help ok')
     test_avatar_helpers()
     print('avatar_helpers ok')
+    test_live2d_model_import()
+    print('live2d_model_import ok')
     test_text_helpers()
     print('text_helpers ok')
     test_speech_pipeline()

@@ -11,6 +11,7 @@ ROOT = Path.cwd()
 GUI_DIR = ROOT / 'maica gui'
 CLI_DIR = ROOT / 'maica cli'
 ASSET_RUNTIME_DIR = ROOT / 'maica gui assets' / 'runtime'
+LIVE2D_WEB_DIR = GUI_DIR / 'live2d_web' / 'dist'
 
 CLI_EXCLUDES = [
     'config.json',
@@ -44,6 +45,8 @@ def collect_data_files(root, prefix, excludes=None):
 
 datas = collect_data_files(CLI_DIR, 'maica cli', CLI_EXCLUDES)
 datas += collect_data_files(ASSET_RUNTIME_DIR, 'maica gui assets/runtime')
+if LIVE2D_WEB_DIR.exists():
+    datas += collect_data_files(LIVE2D_WEB_DIR, 'maica gui/live2d_web/dist')
 
 block_cipher = None
 

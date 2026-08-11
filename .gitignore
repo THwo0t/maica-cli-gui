@@ -34,6 +34,8 @@ maica gui/__pycache__/
 maica gui/**/__pycache__/
 maica gui/.tts_cache/
 maica gui/.safe_test/
+maica gui/live2d_web/node_modules/
+maica gui/.live2d_models/
 
 # GUI runtime assets only. Do not commit the full copied MAS raw asset tree.
 !maica gui assets/
@@ -60,5 +62,5 @@ monika desktop pet/**/__pycache__/
 # Local archives and external source/model directories remain ignored by default:
 # MAICA/, MAICA_ChatSubmod/, MAICA_Server_Submod/, MAS/, Qwen3-Embedding-0.6B/,
 # MAICA_ds_basis/, *.zip, *.rpa, *.safetensors, etc.
-build/
-dist/
+/build/
+/dist/

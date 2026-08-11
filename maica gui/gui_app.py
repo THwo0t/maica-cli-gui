@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.12.4.
+"""MAICA GUI v0.12.5.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSpinBox,
+    QStackedWidget,
     QTabWidget,
     QTextEdit,
     QVBoxLayout,
@@ -50,7 +51,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.12.4'
+APP_VERSION = '0.12.5'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -63,6 +64,7 @@ from assets import AssetManager, normalize_emotion  # noqa: E402
 from avatar_controller import AvatarController  # noqa: E402
 from diagnostics import collect_report  # noqa: E402
 from engine_worker import GuiEngineWorker  # noqa: E402
+from live2d_model import Live2DModelError, import_live2d_zip, validate_live2d_model  # noqa: E402
 from speech import SpeechController  # noqa: E402
 from stt import create_stt  # noqa: E402
 from tts import redact_secret  # noqa: E402
@@ -83,7 +85,7 @@ TTS_PROVIDERS = ('auto', 'bailian_cosyvoice', 'windows_sapi', 'system_say', 'off
 TTS_PLAYBACK_BACKENDS = ('auto', 'ffplay', 'mpv', 'paplay', 'aplay', 'afplay', 'powershell', 'pwsh', 'off')
 STT_PROVIDERS = ('auto', 'windows_speech', 'bailian_paraformer', 'off')
 BACKGROUND_MODES = ('auto', 'day', 'night', 'rain')
-AVATAR_BACKENDS = ('png', 'vtube_studio', 'auto')
+AVATAR_BACKENDS = ('png', 'embedded_live2d', 'vtube_studio', 'auto')
 SECRET_CONFIG_MARKERS = ('key', 'token', 'secret', 'password')
 
 
@@ -444,10 +446,16 @@ class SettingsDialog(QDialog):
         self.vts_plugin_name = QLineEdit()
         self.vts_plugin_developer = QLineEdit()
         self.vts_parameter_prefix = QLineEdit()
+        self.live2d_model_path = QLineEdit()
+        self.live2d_core_path = QLineEdit()
+        self.live2d_render_fps = QSpinBox()
+        self.live2d_render_fps.setRange(15, 120)
+        self.live2d_eye_tracking = QCheckBox('Enable mouse eye tracking')
+        self.live2d_transparent_background = QCheckBox('Use a transparent Live2D canvas')
         self.avatar_status = QLabel('avatar: png')
         self.avatar_status.setObjectName('contextLabel')
         self.avatar_status.setWordWrap(True)
-        self.avatar_test = QPushButton('Connect / Test VTube Studio')
+        self.avatar_test = QPushButton('Apply / Test avatar backend')
         self.avatar_test.clicked.connect(self._test_avatar_connection)
         self.gui_idle_spire_enabled = QCheckBox('Enable idle proactive talk')
         self.gui_idle_spire_minutes = QSpinBox()
@@ -567,6 +575,28 @@ class SettingsDialog(QDialog):
         # --- Avatar ---
         avatar_form = add_tab('Avatar')
         avatar_form.addRow('Avatar backend', self.avatar_backend)
+        model_box = QWidget()
+        model_row = QHBoxLayout(model_box)
+        model_row.setContentsMargins(0, 0, 0, 0)
+        model_row.addWidget(self.live2d_model_path, 1)
+        model_browse = QPushButton('Browse')
+        model_browse.clicked.connect(self._pick_live2d_model)
+        model_row.addWidget(model_browse)
+        model_import = QPushButton('Import ZIP')
+        model_import.clicked.connect(self._import_live2d_model_zip)
+        model_row.addWidget(model_import)
+        avatar_form.addRow('Live2D model', model_box)
+        core_box = QWidget()
+        core_row = QHBoxLayout(core_box)
+        core_row.setContentsMargins(0, 0, 0, 0)
+        core_row.addWidget(self.live2d_core_path, 1)
+        core_browse = QPushButton('Browse')
+        core_browse.clicked.connect(self._pick_live2d_core)
+        core_row.addWidget(core_browse)
+        avatar_form.addRow('Cubism Core', core_box)
+        avatar_form.addRow('Render FPS', self.live2d_render_fps)
+        avatar_form.addRow('', self.live2d_eye_tracking)
+        avatar_form.addRow('', self.live2d_transparent_background)
         avatar_form.addRow('VTube Studio URL', self.vts_url)
         avatar_form.addRow('VTS plugin name', self.vts_plugin_name)
         avatar_form.addRow('VTS developer', self.vts_plugin_developer)
@@ -666,6 +696,11 @@ class SettingsDialog(QDialog):
         self.vts_plugin_name.setText(str(config.get('vts_plugin_name') or 'MAICA CLI GUI'))
         self.vts_plugin_developer.setText(str(config.get('vts_plugin_developer') or 'THwo0t'))
         self.vts_parameter_prefix.setText(str(config.get('vts_parameter_prefix') or 'Maica'))
+        self.live2d_model_path.setText(str(config.get('live2d_model_path') or ''))
+        self.live2d_core_path.setText(str(config.get('live2d_core_path') or ''))
+        self.live2d_render_fps.setValue(int(config.get('live2d_render_fps') or 60))
+        self.live2d_eye_tracking.setChecked(bool(config.get('live2d_eye_tracking', True)))
+        self.live2d_transparent_background.setChecked(bool(config.get('live2d_transparent_background', True)))
         avatar_status = getattr(self.owner, 'avatar_status_text', lambda: 'png')
         self.avatar_status.setText(f'avatar: {avatar_status()}')
         self.gui_idle_spire_enabled.setChecked(bool(config.get('gui_idle_spire_enabled', False)))
@@ -697,9 +732,51 @@ class SettingsDialog(QDialog):
             'vts_plugin_name': self.vts_plugin_name.text().strip(),
             'vts_plugin_developer': self.vts_plugin_developer.text().strip(),
             'vts_parameter_prefix': self.vts_parameter_prefix.text().strip(),
+            'live2d_model_path': self.live2d_model_path.text().strip(),
+            'live2d_core_path': self.live2d_core_path.text().strip(),
+            'live2d_render_fps': self.live2d_render_fps.value(),
+            'live2d_eye_tracking': self.live2d_eye_tracking.isChecked(),
+            'live2d_transparent_background': self.live2d_transparent_background.isChecked(),
         }
-        self.owner.reconnect_avatar_backend(updates)
+        self.owner.reconnect_avatar_backend(updates, force=True)
         self.avatar_status.setText(f'avatar: {self.owner.avatar_status_text()}')
+
+    def _pick_live2d_model(self) -> None:
+        selected = QFileDialog.getExistingDirectory(self, 'Select Cubism 4 model directory')
+        if not selected:
+            return
+        report = validate_live2d_model(selected)
+        if not report.ok:
+            QMessageBox.warning(self, 'Invalid Live2D model', '\n'.join(report.errors[:5]))
+            return
+        self.live2d_model_path.setText(report.entry_point)
+
+    def _import_live2d_model_zip(self) -> None:
+        selected, _filter = QFileDialog.getOpenFileName(
+            self,
+            'Import Cubism 4 model ZIP',
+            str(Path.home()),
+            'ZIP archives (*.zip)',
+        )
+        if not selected:
+            return
+        try:
+            report = import_live2d_zip(selected)
+        except (OSError, Live2DModelError) as exc:
+            QMessageBox.warning(self, 'Live2D import failed', str(exc))
+            return
+        self.live2d_model_path.setText(report.entry_point)
+        QMessageBox.information(self, 'Live2D model imported', f'Imported {report.model_name}. Click Save settings to apply it.')
+
+    def _pick_live2d_core(self) -> None:
+        selected, _filter = QFileDialog.getOpenFileName(
+            self,
+            'Select Live2D Cubism Core JavaScript',
+            str(Path.home()),
+            'JavaScript (*.js)',
+        )
+        if selected:
+            self.live2d_core_path.setText(selected)
 
     def _render_privacy_status(self, config: dict[str, Any]) -> None:
         def onoff(value: Any) -> str:
@@ -821,6 +898,11 @@ class SettingsDialog(QDialog):
             'vts_plugin_name': self.vts_plugin_name.text().strip(),
             'vts_plugin_developer': self.vts_plugin_developer.text().strip(),
             'vts_parameter_prefix': self.vts_parameter_prefix.text().strip(),
+            'live2d_model_path': self.live2d_model_path.text().strip(),
+            'live2d_core_path': self.live2d_core_path.text().strip(),
+            'live2d_render_fps': self.live2d_render_fps.value(),
+            'live2d_eye_tracking': self.live2d_eye_tracking.isChecked(),
+            'live2d_transparent_background': self.live2d_transparent_background.isChecked(),
             'gui_idle_spire_enabled': self.gui_idle_spire_enabled.isChecked(),
             'gui_idle_spire_minutes': self.gui_idle_spire_minutes.value(),
             'idle_self_actions_enabled': self.idle_self_actions_enabled.isChecked(),
@@ -1231,7 +1313,8 @@ class MainWindow(QMainWindow):
         self.avatar_controller = AvatarController(
             self.assets,
             self.avatar_label,
-            self.current_config,
+            stack=self.avatar_stack,
+            config=self.current_config,
             on_status=self._handle_avatar_status,
             on_token=self._handle_vts_token,
         )
@@ -1295,7 +1378,11 @@ class MainWindow(QMainWindow):
         avatar_shadow.setOffset(0, 10)
         avatar_shadow.setColor(QColor(*SHADOW_COLOR))
         self.avatar_label.setGraphicsEffect(avatar_shadow)
-        left_layout.addWidget(self.avatar_label, 1)
+        self.avatar_stack = QStackedWidget()
+        self.avatar_stack.setObjectName('avatarStack')
+        self.avatar_stack.addWidget(self.avatar_label)
+        self.avatar_stack.setCurrentWidget(self.avatar_label)
+        left_layout.addWidget(self.avatar_stack, 1)
 
         self.status_label = QLabel('emotion: smile')
         self.status_label.setObjectName('statusLabel')
@@ -1580,12 +1667,12 @@ class MainWindow(QMainWindow):
         self.current_config['vts_auth_token'] = token
         self.config_save_requested.emit({'vts_auth_token': token})
 
-    def reconnect_avatar_backend(self, overrides: dict[str, Any] | None = None) -> None:
+    def reconnect_avatar_backend(self, overrides: dict[str, Any] | None = None, force: bool = False) -> None:
         if overrides:
             merge_runtime_config(self.current_config, overrides)
         if self.avatar_controller is None:
             return
-        self.avatar_controller.configure(self.current_config)
+        self.avatar_controller.configure(self.current_config, force=force)
         self.avatar_controller.set_emotion(self.current_emotion)
         self._update_avatar_status_label()
 
