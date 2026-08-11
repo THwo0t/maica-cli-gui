@@ -6,9 +6,11 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import threading
 import time
 import traceback
 import urllib.request
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,7 @@ if str(CLI_DIR) not in sys.path:
 
 from embedding_index import build_memory_vector_index, prewarm_embedding_model  # noqa: E402
 from engine import MaicaEngine  # noqa: E402
+from runtime_events import CancellationToken  # noqa: E402
 from mfocus import status_summary  # noqa: E402
 from embedding_service_client import build_service_memory_index  # noqa: E402
 from config_io import save_json  # noqa: E402
@@ -71,6 +74,7 @@ class GuiEngineWorker(QObject):
     finished = Signal(dict)
     stream_started = Signal(dict)
     stream_chunk = Signal(str)
+    runtime_event = Signal(dict)
     data_ready = Signal(dict)
     pet_action = Signal(str, str)  # (action, arg) for the desktop pet body
 
@@ -86,6 +90,10 @@ class GuiEngineWorker(QObject):
         self.config_path = Path(config_path).resolve() if config_path else None
         self.db_path = Path(db_path).resolve() if db_path else None
         self.app_dir = Path(app_dir).resolve() if app_dir else CLI_DIR
+        self._request_lock = threading.Lock()
+        self._active_thread: threading.Thread | None = None
+        self._active_token: CancellationToken | None = None
+        self._active_turn_id = ''
 
     def _safe_error_text(self, exc: Exception | str, with_traceback: bool = False) -> str:
         config = self.engine.config if self.engine is not None else {}
@@ -265,16 +273,28 @@ class GuiEngineWorker(QObject):
 
     @Slot(str)
     def chat(self, text: str) -> None:
-        self._run_request('chat', text)
+        self._start_request('chat', text)
 
     @Slot(str)
     def spire(self, hint: str) -> None:
-        self._run_request('spire', hint)
+        self._start_request('spire', hint)
+
+    @Slot()
+    def cancel_active(self) -> None:
+        with self._request_lock:
+            token = self._active_token
+        if token is not None:
+            token.cancel('cancelled by user')
 
     @Slot()
     def shutdown(self) -> None:
+        self.cancel_active()
+        with self._request_lock:
+            request_thread = self._active_thread
+        if request_thread is not None and request_thread.is_alive():
+            request_thread.join(timeout=3.0)
         self._stop_embedding_service()
-        if self.engine is not None:
+        if self.engine is not None and (request_thread is None or not request_thread.is_alive()):
             self.engine.close()
             self.engine = None
 
@@ -326,29 +346,10 @@ class GuiEngineWorker(QObject):
     def save_config(self, updates: dict) -> None:
         self._run_data_action('save_config', updates=updates)
 
-    def _run_request(self, mode: str, text: str) -> None:
-        try:
-            if self.engine is None:
-                self._ensure_engine()
-            stream_started = False
-
-            def on_stream_chunk(chunk: str) -> None:
-                nonlocal stream_started
-                if not stream_started:
-                    stream_started = True
-                    self.stream_started.emit({'source': mode})
-                self.stream_chunk.emit(chunk)
-
-            if mode == 'spire':
-                result = self.engine.spire(text, stream_callback=on_stream_chunk)
-            else:
-                result = self.engine.chat(text, stream_callback=on_stream_chunk)
-            if stream_started:
-                result['streamed'] = True
-            self.finished.emit(result)
-        except Exception as exc:
-            self.finished.emit(
-                {
+    def _start_request(self, mode: str, text: str) -> None:
+        with self._request_lock:
+            if self._active_thread is not None and self._active_thread.is_alive():
+                self.finished.emit({
                     'ok': False,
                     'source': mode,
                     'text': '',
@@ -356,9 +357,83 @@ class GuiEngineWorker(QObject):
                     'action': {},
                     'mtrigger_notices': [],
                     'debug': {},
-                    'error': self._safe_error_text(exc, with_traceback=True),
-                }
+                    'error': 'The previous turn is still stopping. Please wait a moment.',
+                })
+                return
+            token = CancellationToken()
+            turn_id = str(uuid.uuid4())
+            request_thread = threading.Thread(
+                target=self._run_request,
+                args=(mode, text, token, turn_id),
+                daemon=True,
+                name=f'maica-{mode}-{turn_id[:8]}',
             )
+            self._active_token = token
+            self._active_turn_id = turn_id
+            self._active_thread = request_thread
+        request_thread.start()
+
+    def _is_current_turn(self, turn_id: str) -> bool:
+        with self._request_lock:
+            return self._active_turn_id == turn_id
+
+    def _run_request(self, mode: str, text: str, token: CancellationToken, turn_id: str) -> None:
+        try:
+            if self.engine is None:
+                self._ensure_engine()
+            stream_started = False
+
+            def on_runtime_event(event: dict[str, Any]) -> None:
+                nonlocal stream_started
+                if not self._is_current_turn(turn_id):
+                    return
+                self.runtime_event.emit(event)
+                if event.get('kind') == 'text.delta':
+                    chunk = str((event.get('payload') or {}).get('text') or '')
+                    if not stream_started:
+                        stream_started = True
+                        self.stream_started.emit({'source': mode, 'turn_id': turn_id})
+                    if chunk:
+                        self.stream_chunk.emit(chunk)
+
+            if mode == 'spire':
+                result = self.engine.spire(
+                    text,
+                    event_callback=on_runtime_event,
+                    cancel_token=token,
+                    turn_id=turn_id,
+                )
+            else:
+                result = self.engine.chat(
+                    text,
+                    event_callback=on_runtime_event,
+                    cancel_token=token,
+                    turn_id=turn_id,
+                )
+            if stream_started:
+                result['streamed'] = True
+            if self._is_current_turn(turn_id):
+                self.finished.emit(result)
+        except Exception as exc:
+            if self._is_current_turn(turn_id):
+                self.finished.emit(
+                    {
+                        'ok': False,
+                        'source': mode,
+                        'text': '',
+                        'emotion': 'concerned',
+                        'action': {},
+                        'mtrigger_notices': [],
+                        'debug': {},
+                        'error': self._safe_error_text(exc, with_traceback=True),
+                    }
+                )
+        finally:
+            with self._request_lock:
+                if self._active_turn_id == turn_id:
+                    self._active_token = None
+                    self._active_turn_id = ''
+                    self._active_thread = None
 
     def _ensure_engine(self) -> MaicaEngine:
         if self.engine is None:
@@ -372,6 +447,11 @@ class GuiEngineWorker(QObject):
         return self.engine
 
     def _run_data_action(self, action: str, **kwargs: Any) -> None:
+        with self._request_lock:
+            request_busy = self._active_thread is not None and self._active_thread.is_alive()
+        if request_busy:
+            self.data_ready.emit({'ok': False, 'action': action, 'error': 'A conversation turn is still running.'})
+            return
         try:
             engine = self._ensure_engine()
             notice = ''

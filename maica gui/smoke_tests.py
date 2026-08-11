@@ -47,6 +47,7 @@ def compile_python() -> None:
         CLI_DIR / 'embedding_service_client.py',
         CLI_DIR / 'mfocus.py',
         CLI_DIR / 'response_planner.py',
+        CLI_DIR / 'runtime_events.py',
         CLI_DIR / 'example_bank.py',
         CLI_DIR / 'language_runtime.py',
         CLI_DIR / 'context_translation.py',
@@ -322,13 +323,68 @@ def test_engine_fake_stream() -> None:
         engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'stream.db', app_dir=CLI_DIR)
         engine.client = FakeStreamClient()
         chunks: list[str] = []
+        events: list[dict[str, Any]] = []
         try:
-            result = engine.chat('hello', stream_callback=chunks.append)
+            result = engine.chat('hello', stream_callback=chunks.append, event_callback=events.append)
             check(result['ok'], result.get('error', 'fake stream failed'))
             check(result.get('streamed') is True, 'fake stream did not mark streamed')
             check(chunks == ['[smile] Hello', ' there.'], 'stream chunks mismatch')
             check(result['text'] == 'Hello there.', 'stream parsed text mismatch')
             check(result['emotion'] == 'smile', 'stream emotion mismatch')
+            kinds = [event.get('kind') for event in events]
+            check(kinds[0] == 'turn.started' and kinds[-1] == 'turn.finished', 'runtime terminal event order mismatch')
+            check(kinds.count('text.delta') == 2, 'runtime should emit one text event per stream chunk')
+            check('dialogue.final' in kinds and 'emotion.changed' in kinds, 'runtime final events missing')
+            sequences = [int(event.get('sequence') or 0) for event in events]
+            check(sequences == sorted(sequences) and len(sequences) == len(set(sequences)),
+                  'runtime event sequences must be strictly increasing')
+        finally:
+            engine.close()
+
+
+def test_runtime_cancellation() -> None:
+    sys.path.insert(0, str(CLI_DIR))
+    from config_defaults import DEFAULT_CONFIG
+    from engine import MaicaEngine
+    from runtime_events import CancellationToken
+
+    class SlowFakeClient:
+        def chat_stream(self, messages, overrides=None):
+            yield 'This must not be saved.'
+            yield ' Nor shown.'
+
+        def chat_with_usage(self, messages, overrides=None):
+            raise AssertionError('cancel test should stay on the streaming path')
+
+    with tempfile.TemporaryDirectory(prefix='maica-cancel-smoke-') as temp_dir:
+        config = dict(DEFAULT_CONFIG)
+        config.update({
+            'api_key_required': False,
+            'jsonl_logs_enabled': False,
+            'streaming_enabled': True,
+            'mtrigger_mode': 'off',
+            'metadata_extract_enabled': False,
+            'style_enabled': False,
+            'embedding_enabled': False,
+            'memory_embedding_enabled': False,
+            'embedding_service_enabled': False,
+        })
+        engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'cancel.db', app_dir=CLI_DIR)
+        engine.client = SlowFakeClient()
+        token = CancellationToken()
+        events: list[dict[str, Any]] = []
+
+        def collect(event: dict[str, Any]) -> None:
+            events.append(event)
+            if event.get('kind') == 'text.delta':
+                token.cancel('test cancellation')
+
+        try:
+            result = engine.chat('cancel me', event_callback=collect, cancel_token=token)
+            check(result.get('cancelled') is True, 'cancelled turn should return a cancellation result')
+            check([event.get('kind') for event in events][-1] == 'turn.cancelled',
+                  'cancelled turn must end with turn.cancelled')
+            check(engine.store.recent_messages(10) == [], 'cancelled turn must not write chat messages')
         finally:
             engine.close()
 
@@ -937,14 +993,20 @@ def test_engine_agent_loop() -> None:
         )
         engine = MaicaEngine(config=config, db_path=Path(temp_dir) / 'agent.db', app_dir=CLI_DIR)
         engine._agent_client_override = FakeAgentClient()
+        events: list[dict[str, Any]] = []
         try:
-            result = engine.chat('how close are we?')
+            result = engine.chat('how close are we?', event_callback=events.append)
             check(result['ok'], result.get('error', 'agent chat failed'))
             check(result['text'] == 'We are closer than ever.', 'agent loop final reply mismatch')
             trace = result['mfocus_plan'].get('agent_trace') or []
             check(len(trace) == 1 and trace[0]['tool'] == 'check_our_closeness',
                   'agent loop must record the tool call')
             check('affection' in trace[0]['output'], 'tool output must include affection')
+            tool_events = [event for event in events if str(event.get('kind') or '').startswith('tool.')]
+            check([event['kind'] for event in tool_events] == ['tool.started', 'tool.finished'],
+                  'agent runtime should expose bounded tool lifecycle events')
+            check('output' not in tool_events[-1].get('payload', {}),
+                  'tool runtime events must not expose complete private tool output')
         finally:
             engine.close()
 
@@ -1108,6 +1170,8 @@ def main() -> int:
     print('engine_fake_chat ok')
     test_engine_fake_stream()
     print('engine_fake_stream ok')
+    test_runtime_cancellation()
+    print('runtime_cancellation ok')
     test_engine_language_rewrite()
     print('engine_language_rewrite ok')
     test_prompt_language_systems()

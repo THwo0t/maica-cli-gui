@@ -23,6 +23,7 @@ from mfocus import special_events_for_today
 from mtrigger import apply_mtrigger
 from persona import relationship_stage
 from response import limit_dialogue_sentences, parse_assistant_response
+from runtime_events import CancellationToken, EventCallback, TurnCancelled, TurnRuntime
 from spire_topics import choose_spire_topic
 from store import Store
 from language_runtime import rewrite_prompt, target_language
@@ -254,6 +255,12 @@ class MaicaEngine:
             self.config.get("stt_bailian_api_key", ""),
         )
 
+    @staticmethod
+    def _bind_cancel_token(client: Any, token: CancellationToken | None) -> None:
+        setter = getattr(client, 'set_cancel_token', None)
+        if callable(setter):
+            setter(token)
+
     # ------------------------------------------------------------------
     # Agentic tool calling (P1 foundation)
     # ------------------------------------------------------------------
@@ -350,11 +357,17 @@ class MaicaEngine:
         provider = resolve_llm_provider(self.config, "agent")
         return OpenAICompatibleClient({**self.config, **provider})
 
-    def _run_agent_loop(self, messages: list[dict[str, Any]]) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
+    def _run_agent_loop(
+        self,
+        messages: list[dict[str, Any]],
+        runtime: TurnRuntime | None = None,
+    ) -> tuple[str, dict[str, Any], list[dict[str, Any]]]:
         """Run a bounded tool-using loop and return (final_text, usage, trace)."""
         registry = self._tool_registry()
         tools = [entry["schema"] for entry in registry.values()]
         client = self._resolve_agent_client()
+        if runtime is not None:
+            self._bind_cancel_token(client, runtime.token)
         convo: list[dict[str, Any]] = list(messages)
         # Tell her the tools are real, or she tends to narrate doing the action
         # (saving a letter, etc.) without actually calling the tool.
@@ -390,7 +403,11 @@ class MaicaEngine:
                                        int(self.config.get("agent_max_tokens", 2048) or 2048))}
 
         for _ in range(max_steps):
+            if runtime is not None:
+                runtime.check()
             result = client.complete_with_tools(convo, tools, overrides)
+            if runtime is not None:
+                runtime.check()
             self._accumulate_usage(usage_total, result.get("usage"))
             message = result.get("message") or {}
             tool_calls = message.get("tool_calls") or []
@@ -401,6 +418,10 @@ class MaicaEngine:
             for call in tool_calls:
                 fn = call.get("function") or {}
                 name = str(fn.get("name") or "")
+                call_id = str(call.get('id') or '')
+                if runtime is not None:
+                    runtime.check()
+                    runtime.emit('tool.started', {'tool': name, 'call_id': call_id})
                 try:
                     args = json.loads(fn.get("arguments") or "{}")
                 except (TypeError, ValueError):
@@ -413,6 +434,13 @@ class MaicaEngine:
                         output = entry["run"](args)
                     except Exception as exc:  # surface tool errors to the model, do not crash
                         output = {"error": self._safe_error(exc)}
+                if runtime is not None:
+                    runtime.check()
+                    failed = isinstance(output, dict) and bool(output.get('error'))
+                    payload: dict[str, Any] = {'tool': name, 'call_id': call_id, 'ok': not failed}
+                    if failed:
+                        payload['error'] = self._safe_error(str(output.get('error') or 'tool failed'))[:240]
+                    runtime.emit('tool.error' if failed else 'tool.finished', payload)
                 trace.append({"tool": name, "args": args, "output": output})
                 convo.append(
                     {
@@ -422,7 +450,11 @@ class MaicaEngine:
                     }
                 )
         # Out of steps: force a final answer without offering more tools.
-        final = self._resolve_agent_client().complete_with_tools(convo, None, overrides)
+        if runtime is not None:
+            runtime.check()
+        final = client.complete_with_tools(convo, None, overrides)
+        if runtime is not None:
+            runtime.check()
         self._accumulate_usage(usage_total, final.get("usage"))
         return str((final.get("message") or {}).get("content") or ""), usage_total, trace
 
@@ -435,16 +467,29 @@ class MaicaEngine:
             if isinstance(value, (int, float)):
                 total[key] = total.get(key, 0) + value
 
-    def chat(self, user_input: str, stream_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
+    def chat(
+        self,
+        user_input: str,
+        stream_callback: Callable[[str], None] | None = None,
+        event_callback: EventCallback | None = None,
+        cancel_token: CancellationToken | None = None,
+        turn_id: str | None = None,
+    ) -> dict[str, Any]:
         started = time.time()
+        runtime = TurnRuntime(event_callback, cancel_token, turn_id)
+        self._bind_cancel_token(self.client, runtime.token)
+        runtime.emit('turn.started', {'source': 'chat'})
         try:
+            runtime.check()
             messages, mfocus_plan = build_messages(self.store, self.config, user_input, self.client)
+            runtime.check()
             if self.config.get("agent_tools_enabled"):
-                raw_reply, usage, agent_trace = self._run_agent_loop(messages)
+                raw_reply, usage, agent_trace = self._run_agent_loop(messages, runtime)
                 streamed = False
                 mfocus_plan["agent_trace"] = agent_trace
             else:
-                raw_reply, usage, streamed = self._call_chat(messages, "chat", stream_callback)
+                raw_reply, usage, streamed = self._call_chat(messages, "chat", stream_callback, runtime)
+            runtime.check()
             parsed = parse_assistant_response(raw_reply)
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
@@ -455,6 +500,7 @@ class MaicaEngine:
             if rewrite_info:
                 mfocus_plan["language_rewrite"] = rewrite_info
 
+            runtime.check()
             self.store.add_message("user", user_input)
             self.store.add_message("assistant", reply, language=target_language(self.config))
             self.store.increment_chat_turns()
@@ -493,7 +539,7 @@ class MaicaEngine:
                 },
                 self.app_dir,
             )
-            return {
+            result = {
                 "ok": True,
                 "source": "chat",
                 "user": user_input,
@@ -510,7 +556,27 @@ class MaicaEngine:
                 "debug": {"mfocus_plan": compact_debug_plan(mfocus_plan)},
                 "error": "",
             }
+            result['turn_id'] = runtime.turn_id
+            runtime.emit('dialogue.final', {'source': 'chat', 'text': reply})
+            runtime.emit('emotion.changed', {'emotion': parsed['emotion']})
+            runtime.emit('action.requested', {'action': parsed['action']})
+            runtime.finish('turn.finished', {'source': 'chat', 'response_time': response_time})
+            self._bind_cancel_token(self.client, None)
+            return result
+        except TurnCancelled as exc:
+            runtime.finish('turn.cancelled', {'reason': str(exc)})
+            self._bind_cancel_token(self.client, None)
+            return {
+                "ok": False, "cancelled": True, "turn_id": runtime.turn_id,
+                "source": "chat", "user": user_input, "text": "", "emotion": "neutral",
+                "action": {}, "removed_markers": [], "mfocus_plan": {},
+                "mtrigger_notices": [], "raw_reply": "", "streamed": False,
+                "response_time": round(time.time() - started, 3), "debug": {}, "error": str(exc),
+            }
         except Exception as exc:
+            error = self._safe_error(exc)
+            runtime.finish('turn.failed', {'source': 'chat', 'error': error})
+            self._bind_cancel_token(self.client, None)
             return {
                 "ok": False,
                 "source": "chat",
@@ -525,12 +591,24 @@ class MaicaEngine:
                 "streamed": False,
                 "response_time": round(time.time() - started, 3),
                 "debug": {},
-                "error": self._safe_error(exc),
+                "turn_id": runtime.turn_id,
+                "error": error,
             }
 
-    def spire(self, hint: str = "", stream_callback: Callable[[str], None] | None = None) -> dict[str, Any]:
+    def spire(
+        self,
+        hint: str = "",
+        stream_callback: Callable[[str], None] | None = None,
+        event_callback: EventCallback | None = None,
+        cancel_token: CancellationToken | None = None,
+        turn_id: str | None = None,
+    ) -> dict[str, Any]:
         started = time.time()
+        runtime = TurnRuntime(event_callback, cancel_token, turn_id)
+        self._bind_cancel_token(self.client, runtime.token)
+        runtime.emit('turn.started', {'source': 'spire'})
         try:
+            runtime.check()
             spire_topic = choose_spire_topic(self.store, self.config, hint)
             messages, mfocus_plan = build_spire_messages(
                 self.store,
@@ -541,12 +619,14 @@ class MaicaEngine:
                 spire_topic["topic_id"],
                 spire_topic.get("wiki", {}),
             )
+            runtime.check()
             if self.config.get("agent_tools_enabled"):
-                raw_reply, usage, agent_trace = self._run_agent_loop(messages)
+                raw_reply, usage, agent_trace = self._run_agent_loop(messages, runtime)
                 streamed = False
                 mfocus_plan["agent_trace"] = agent_trace
             else:
-                raw_reply, usage, streamed = self._call_chat(messages, "spire", stream_callback)
+                raw_reply, usage, streamed = self._call_chat(messages, "spire", stream_callback, runtime)
+            runtime.check()
             parsed = parse_assistant_response(raw_reply)
             parsed = self._extract_metadata_if_needed(parsed)
             parsed = apply_response_meta_fallback(parsed, mfocus_plan)
@@ -557,6 +637,7 @@ class MaicaEngine:
             if rewrite_info:
                 mfocus_plan["language_rewrite"] = rewrite_info
 
+            runtime.check()
             self.store.add_message("assistant", reply, language=target_language(self.config))
             self.store.increment_chat_turns()
             self.store.add_event(
@@ -595,7 +676,7 @@ class MaicaEngine:
                 },
                 self.app_dir,
             )
-            return {
+            result = {
                 "ok": True,
                 "source": "spire",
                 "user": hint,
@@ -615,7 +696,27 @@ class MaicaEngine:
                 },
                 "error": "",
             }
+            result['turn_id'] = runtime.turn_id
+            runtime.emit('dialogue.final', {'source': 'spire', 'text': reply})
+            runtime.emit('emotion.changed', {'emotion': parsed['emotion']})
+            runtime.emit('action.requested', {'action': parsed['action']})
+            runtime.finish('turn.finished', {'source': 'spire', 'response_time': response_time})
+            self._bind_cancel_token(self.client, None)
+            return result
+        except TurnCancelled as exc:
+            runtime.finish('turn.cancelled', {'reason': str(exc)})
+            self._bind_cancel_token(self.client, None)
+            return {
+                "ok": False, "cancelled": True, "turn_id": runtime.turn_id,
+                "source": "spire", "user": hint, "text": "", "emotion": "neutral",
+                "action": {}, "removed_markers": [], "mfocus_plan": {},
+                "mtrigger_notices": [], "raw_reply": "", "streamed": False,
+                "response_time": round(time.time() - started, 3), "debug": {}, "error": str(exc),
+            }
         except Exception as exc:
+            error = self._safe_error(exc)
+            runtime.finish('turn.failed', {'source': 'spire', 'error': error})
+            self._bind_cancel_token(self.client, None)
             return {
                 "ok": False,
                 "source": "spire",
@@ -630,7 +731,8 @@ class MaicaEngine:
                 "streamed": False,
                 "response_time": round(time.time() - started, 3),
                 "debug": {},
-                "error": self._safe_error(exc),
+                "turn_id": runtime.turn_id,
+                "error": error,
             }
 
     def _auto_refresh_memory_vectors(self) -> str:
@@ -661,23 +763,34 @@ class MaicaEngine:
         messages: list[dict[str, str]],
         source: str,
         stream_callback: Callable[[str], None] | None = None,
+        runtime: TurnRuntime | None = None,
     ) -> tuple[str, dict[str, Any], bool]:
         usage: dict[str, Any] = {}
         if self.config.get("streaming_enabled", False):
             chunks: list[str] = []
             try:
                 for chunk in self.client.chat_stream(messages):
+                    if runtime is not None:
+                        runtime.check()
                     if not chunk:
                         continue
                     chunks.append(chunk)
                     if stream_callback is not None:
                         stream_callback(chunk)
+                    if runtime is not None:
+                        runtime.emit('text.delta', {'source': source, 'text': chunk})
                 if chunks:
                     return "".join(chunks).strip(), usage, True
+            except TurnCancelled:
+                raise
             except Exception:
                 if chunks:
                     return "".join(chunks).strip(), usage, True
+        if runtime is not None:
+            runtime.check()
         result = self.client.chat_with_usage(messages)
+        if runtime is not None:
+            runtime.check()
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
         if self.config.get("token_stats_enabled", True):
             try:

@@ -1,4 +1,4 @@
-# MAICA GUI v0.11.1
+# MAICA GUI v0.12.3
 
 Independent PySide6 GUI frontend for MAICA.
 
@@ -64,6 +64,8 @@ assets.
 - MTrigger notices are shown in the chat log.
 - Windows SAPI TTS and Aliyun Bailian CosyVoice TTS.
 - Persistent background engine worker, so GUI no longer rebuilds the engine every turn.
+- Structured per-turn runtime events for text, metadata, tools, completion, failure, and cancellation.
+- The Send button becomes Stop while a turn is running; cancelled or stale turns cannot update the GUI.
 - Data Manager dialog for profile, nicknames, affection, memories, facts, and safe debug snapshots.
 - Settings dialog for common non-secret runtime options.
 - Diagnostics export button for safe troubleshooting reports.

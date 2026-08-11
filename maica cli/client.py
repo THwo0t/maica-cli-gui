@@ -16,6 +16,14 @@ from text_utils import redact_secret
 class OpenAICompatibleClient:
     def __init__(self, config: dict[str, Any]):
         self.config = config
+        self.cancel_token: Any | None = None
+
+    def set_cancel_token(self, token: Any | None) -> None:
+        self.cancel_token = token
+
+    def _check_cancelled(self) -> None:
+        if self.cancel_token is not None:
+            self.cancel_token.check()
 
     def endpoint(self) -> str:
         api_base = str(self.config.get("api_base") or "").rstrip("/")
@@ -60,14 +68,25 @@ class OpenAICompatibleClient:
         last_exc: Exception | None = None
         for attempt in range(attempts):
             try:
+                self._check_cancelled()
                 with urllib.request.urlopen(request, timeout=timeout) as response:
-                    return json.loads(response.read().decode("utf-8"))
+                    close_response = response.close
+                    if self.cancel_token is not None:
+                        self.cancel_token.add_cancel_callback(close_response)
+                    try:
+                        payload = response.read()
+                        self._check_cancelled()
+                        return json.loads(payload.decode("utf-8"))
+                    finally:
+                        if self.cancel_token is not None:
+                            self.cancel_token.remove_cancel_callback(close_response)
             except urllib.error.HTTPError as exc:
                 # A real API response (4xx/5xx); do not retry — surface it.
                 detail = exc.read().decode("utf-8", "replace")
                 raise RuntimeError(f"HTTP {exc.code}: {redact_secret(detail, api_key)}") from exc
             except Exception as exc:
                 # Transient: SSL EOF, IncompleteRead, timeout, connection reset.
+                self._check_cancelled()
                 last_exc = exc
                 if attempt < attempts - 1:
                     time.sleep(0.8 * (attempt + 1))
@@ -118,25 +137,35 @@ class OpenAICompatibleClient:
             method="POST",
         )
         try:
+            self._check_cancelled()
             with urllib.request.urlopen(request, timeout=int(self.config.get("request_timeout", 120))) as response:
-                for raw_line in response:
-                    line = raw_line.decode("utf-8", "replace").strip()
-                    if not line or not line.startswith("data:"):
-                        continue
-                    data = line[5:].strip()
-                    if data == "[DONE]":
-                        break
-                    try:
-                        payload = json.loads(data)
-                    except json.JSONDecodeError:
-                        continue
-                    choices = payload.get("choices") or []
-                    if not choices:
-                        continue
-                    delta = choices[0].get("delta") or {}
-                    content = delta.get("content")
-                    if content:
-                        yield str(content)
+                close_response = response.close
+                if self.cancel_token is not None:
+                    self.cancel_token.add_cancel_callback(close_response)
+                try:
+                    for raw_line in response:
+                        self._check_cancelled()
+                        line = raw_line.decode("utf-8", "replace").strip()
+                        if not line or not line.startswith("data:"):
+                            continue
+                        data = line[5:].strip()
+                        if data == "[DONE]":
+                            break
+                        try:
+                            payload = json.loads(data)
+                        except json.JSONDecodeError:
+                            continue
+                        choices = payload.get("choices") or []
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta") or {}
+                        content = delta.get("content")
+                        if content:
+                            yield str(content)
+                    self._check_cancelled()
+                finally:
+                    if self.cancel_token is not None:
+                        self.cancel_token.remove_cancel_callback(close_response)
         except urllib.error.HTTPError as exc:
             detail = exc.read().decode("utf-8", "replace")
             api_key = os.environ.get("MAICA_CLI_API_KEY") or str(self.config.get("api_key") or "")

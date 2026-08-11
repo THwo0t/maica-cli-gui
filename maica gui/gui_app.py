@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""MAICA GUI v0.12.2.
+"""MAICA GUI v0.12.3.
 
 The GUI calls the shared MaicaEngine through a persistent background worker.
 The CLI remains a debugger and is not started in the background.
@@ -50,7 +50,7 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 GUI_DIR = Path(__file__).resolve().parent
 ASSET_DIR = ROOT_DIR / 'maica gui assets' / 'runtime'
 MANIFEST_PATH = ASSET_DIR / 'manifest.json'
-APP_VERSION = '0.12.2'
+APP_VERSION = '0.12.3'
 
 if str(GUI_DIR) not in sys.path:
     sys.path.insert(0, str(GUI_DIR))
@@ -1139,6 +1139,7 @@ class ChatLog(QScrollArea):
 class MainWindow(QMainWindow):
     chat_requested = Signal(str)
     spire_requested = Signal(str)
+    cancel_requested = Signal()
     shutdown_requested = Signal()
     data_snapshot_requested = Signal()
     profile_set_requested = Signal(str, str)
@@ -1186,6 +1187,8 @@ class MainWindow(QMainWindow):
         self.streaming_active = False
         self.streaming_text = ''
         self._stream_bubble: MessageBubble | None = None
+        self.active_turn_id = ''
+        self.active_event_sequence = 0
         self.startup_greeting_shown = False
         self.idle_timer.setInterval(30_000)
         self.idle_timer.timeout.connect(self.check_idle_spire)
@@ -1224,13 +1227,13 @@ class MainWindow(QMainWindow):
         self.worker.ready.connect(self._handle_ready)
         self.worker.status.connect(self.add_system_message)
         self.worker.finished.connect(self._handle_result)
-        self.worker.stream_started.connect(self._handle_stream_started)
-        self.worker.stream_chunk.connect(self._handle_stream_chunk)
+        self.worker.runtime_event.connect(self._handle_runtime_event)
         self.worker.config_ready.connect(self._handle_config_ready)
         self.worker.data_ready.connect(self._handle_data_ready)
         self.worker.pet_action.connect(self._apply_pet_action)
         self.chat_requested.connect(self.worker.chat)
         self.spire_requested.connect(self.worker.spire)
+        self.cancel_requested.connect(self.worker.cancel_active)
         self.shutdown_requested.connect(self.worker.shutdown)
         self.data_snapshot_requested.connect(self.worker.data_snapshot)
         self.profile_set_requested.connect(self.worker.set_profile_value)
@@ -1325,7 +1328,7 @@ class MainWindow(QMainWindow):
         for button in (self.data_button, self.settings_button, self.diagnostics_button,
                        self.eval_button, self.pet_button, self.debug_button, self.clear_button):
             button.setProperty('btnRole', 'ghost')
-        self.send_button.clicked.connect(self.send_chat)
+        self.send_button.clicked.connect(self.send_or_cancel)
         self.spire_button.clicked.connect(self.send_spire)
         self.tts_button.clicked.connect(self.toggle_tts)
         self.stop_tts_button.clicked.connect(self.stop_tts)
@@ -1423,6 +1426,30 @@ class MainWindow(QMainWindow):
             self._stream_bubble.set_body(self.streaming_text)
             self.chat_log._scroll_to_bottom()
 
+    def _handle_runtime_event(self, event: dict[str, Any]) -> None:
+        turn_id = str(event.get('turn_id') or '')
+        kind = str(event.get('kind') or '')
+        sequence = int(event.get('sequence') or 0)
+        payload = event.get('payload') if isinstance(event.get('payload'), dict) else {}
+        if kind == 'turn.started':
+            self.active_turn_id = turn_id
+            self.active_event_sequence = sequence
+            return
+        if not turn_id or turn_id != self.active_turn_id or sequence <= self.active_event_sequence:
+            return
+        self.active_event_sequence = sequence
+        if kind == 'text.delta':
+            self._handle_stream_chunk(str(payload.get('text') or ''))
+        elif kind == 'emotion.changed':
+            self.set_emotion(str(payload.get('emotion') or 'neutral'))
+        elif kind == 'action.requested' and self.avatar_controller is not None:
+            self.avatar_controller.play_action(payload.get('action'))
+        elif kind == 'tool.started':
+            self.status_label.setText(f"Monika is using {payload.get('tool', 'a tool')}...")
+        elif kind == 'turn.cancelled':
+            self.send_button.setEnabled(False)
+            self.send_button.setText('Stopping...')
+
     def _finish_streaming_message(self, emotion: str, response_time: Any = '', final_text: str | None = None) -> None:
         if self._stream_bubble is not None:
             # The streamed text is the raw model output; the engine may have
@@ -1437,7 +1464,8 @@ class MainWindow(QMainWindow):
         self._stream_bubble = None
 
     def set_busy(self, busy: bool) -> None:
-        self.send_button.setEnabled(not busy)
+        self.send_button.setEnabled(True)
+        self.send_button.setText('Stop' if busy else 'Send')
         self.spire_button.setEnabled(not busy)
         self.input_box.setEnabled(not busy)
         if busy:
@@ -1548,6 +1576,20 @@ class MainWindow(QMainWindow):
         self.add_user_message(text)
         self.set_busy(True)
         self.chat_requested.emit(text)
+
+    def send_or_cancel(self) -> None:
+        if not self.input_box.isEnabled():
+            self.cancel_active_turn()
+            return
+        self.send_chat()
+
+    def cancel_active_turn(self) -> None:
+        if not self.active_turn_id and self.input_box.isEnabled():
+            return
+        self.send_button.setEnabled(False)
+        self.send_button.setText('Stopping...')
+        self.stop_tts()
+        self.cancel_requested.emit()
 
     def send_spire(self) -> None:
         hint = self.input_box.toPlainText().strip()
@@ -1797,8 +1839,19 @@ class MainWindow(QMainWindow):
         )
 
     def _handle_result(self, result: dict[str, Any]) -> None:
+        result_turn_id = str(result.get('turn_id') or '')
+        if result_turn_id and self.active_turn_id and result_turn_id != self.active_turn_id:
+            return
         self.set_busy(False)
+        self.active_turn_id = ''
+        self.active_event_sequence = 0
         self.last_user_activity = dt.datetime.now()
+        if result.get('cancelled'):
+            if self.streaming_active:
+                self._finish_streaming_message('neutral', final_text='')
+            self.add_system_message('Request cancelled.')
+            self.set_emotion('neutral')
+            return
         if not result.get('ok'):
             self.set_emotion('concerned')
             if self.streaming_active:
